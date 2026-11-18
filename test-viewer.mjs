@@ -3,7 +3,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -74,13 +74,16 @@ after(async () => {
 async function waitForEdgesAtLeast(p, n) {
   await p.waitForFunction((n) => {
     const v = window.__flowViewer.flowView;
-    const want = v.edgeItems.length + v.linkItems.length;
+    // サイド列をスクロールして画面外になった端点の縁は描かないので、描けるぶんだけ比較する
+    const want = v.edgeItems.concat(v.linkItems).filter((it) => it.d).length;
     return v.edgeItems.length >= n && want === document.querySelectorAll("#flow-edges path.edge").length;
   }, n, { timeout: 8000 });
 }
 async function laneSeq(p) {
   return p.evaluate(() => Array.from(document.querySelectorAll("#flow-chart > .fc-row")).map((r) =>
-    r.classList.contains("fc-arrow-row") ? "▼" : (r.dataset.row || "").split("/").pop()));
+    r.classList.contains("fc-arrow-row") ? "▼"
+      : r.classList.contains("fc-term-row") ? r.querySelector(".term").textContent.trim()
+        : (r.dataset.row || "").split("/").pop()));
 }
 async function waitForHlEdges(p, n) {
   await p.waitForFunction((n) => document.querySelectorAll("#flow-edges path.edge.hl").length >= n, n, { timeout: 8000 });
@@ -123,9 +126,12 @@ test("フロー図の既定はたたんだフローチャート（ボックス�
     "next の順（contains の order）が崩れている");
   // ▼ は線形 next の間だけ: gate-result -> retry-gate は分岐縁なので ▼ を置かない
   assert.deepEqual(await laneSeq(page),
-    ["receive", "▼", "gate-result", "retry-gate", "charge", "▼", "notify", "▼", "daily-report"],
-    "▼ の位置が next 縁と合っていない");
-  assert.equal(await page.locator("#flow-chart .fc-arrow").count(), 3, "▼ 矢印が 3 本無い");
+    ["開始", "▼", "receive", "▼", "gate-result", "retry-gate", "charge", "▼", "notify", "▼", "daily-report", "▼", "終了"],
+    "▼ と開始／終了の位置が next 縁と合っていない");
+  // 線形 next の ▼ 3 本 + 開始・終了の目印の矢印 2 本
+  assert.equal(await page.locator("#flow-chart .fc-arrow").count(), 5, "▼ 矢印の本数が違う");
+  assert.deepEqual(await page.locator("#flow-chart .fc-term-row .term").allInnerTexts(), ["開始", "終了"],
+    "フローの先頭・末尾の目印が無い");
   // 既定は左右の格納先カラムを出さない（3 列常時表示はやめた）
   assert.equal(await page.locator("#flow-chart .fc-side .fnode").count(), 0, "既定でサイドカードが出ている");
   // 分岐・ループの縁は展開と無関係に常時描く
@@ -174,19 +180,29 @@ test("分岐ノード（gateway）はひし形で描き、条件ラベルを縁�
   await page.screenshot({ path: join(SHOTS, "01e-gateway.png") });
 });
 
-test("前方向ループ（metadata.loop）は左側を回る強調縁と ↺ ラベルで示す", async () => {
+test("前方向ループ（metadata.loop）は左頂点から出て左ガターを回り、行き先の下辺へ上向きに戻る", async () => {
+  const SRC = "step:order-intake/retry-gate";
   const loopPath = page.locator('#flow-edges path.edge.loop[data-edge="step:order-intake/retry-gate|next|step:order-intake/receive"]');
   assert.equal(await loopPath.count(), 1, "retry-gate → receive のループ縁が描画されない");
   const d = await loopPath.getAttribute("d");
   const n = d.match(/[-\d.]+/g).map(Number);
-  // M 出所 C .. .. ガター入口 L ガター走行 .. C .. .. 進入前 L 終点
+  // M 出所 C 制御 .. .. 折れ L ガター走行 .. C .. .. 進入前 L 終点
   const [x1, y1] = n;
   const [gx, gy] = n.slice(6, 8);
   const [x3, y3, x2, y2] = n.slice(-4);
   assert.equal(await loopPath.getAttribute("data-route"), "loop", "ループ縁の経路種別が違う");
   assert.ok(y2 < y1 - 40, "ループ縁が前方向に戻っていない: " + d);
   assert.ok(gx < Math.min(x1, x2) - 6, "ループ縁がレーン左側を回っていない: " + d);
-  assert.ok(Math.abs(n[8] - gx) < 0.01 && gy > y1, "ガターが下頂点の直下から始まっていない: " + d);
+  // 出口は出所の「左頂点」（前方分岐は下頂点）。折れの直前まで真横に走る
+  const anchor = await page.evaluate((id) => {
+    const lane = document.querySelector("#flow-chart").getBoundingClientRect();
+    const r = document.querySelector('.step-box[data-node="' + id + '"]').getBoundingClientRect();
+    return { left: r.left - lane.left, cy: (r.top + r.bottom) / 2 - lane.top };
+  }, SRC);
+  assert.ok(Math.abs(x1 - anchor.left) <= 2, "ループ縁が左頂点から出ていない: " + d);
+  assert.ok(Math.abs(y1 - anchor.cy) <= 2, "ループ縁の出口がひし形の左頂点の高さに無い: " + d);
+  assert.ok(Math.abs(n[3] - y1) < 0.01, "左頂点から真横に出ている（折れが角丸）: " + d);
+  assert.ok(Math.abs(n[8] - gx) < 0.01, "ガターが縦一直線になっていない: " + d);
   assert.ok(x3 === x2 && y3 > y2 + 6, "ループ縁が行き先の下辺へ上向きに届いていない: " + d);
   assert.equal(await loopPath.getAttribute("data-face"), "up", "ループ縁の入り方向が違う");
   const labels = await page.locator("#flow-edge-labels text.loop").evaluateAll((ts) => ts.map((t) => t.textContent.trim()));
@@ -195,6 +211,34 @@ test("前方向ループ（metadata.loop）は左側を回る強調縁と ↺ �
   assert.match(labels[0], /3回目まで再実行/);
   assert.equal(await page.locator("#flow-edges path.edge.next.loop").count(), 0, "ループ縁が分岐縁を兼ねている");
   await page.screenshot({ path: join(SHOTS, "01d-loop.png") });
+});
+
+test("gateway はどのビューでも未記入に数えない（フロー一覧 / I/O 一覧 / 詳細パネル）", async () => {
+  const GW = "step:order-intake/gate-result";
+  // 新規ページ（ノード未選択）: サマリーのフロー一覧は未記入 0（修正前は gateway 2 個を数えていた）
+  const p0 = await openPage();
+  await p0.waitForSelector("#detail-summary table");
+  assert.equal(await p0.locator("#detail-summary .badge.empty-io").count(), 0, "フロー一覧の未記列が gateway を数えている");
+  await p0.close();
+  // I/O 一覧: gateway 行の名前セル（3 列目。1 列目はフロー）は「分岐 N」バッジで「未記入」ではない
+  await page.click('.tab-btn[data-view="io"]');
+  await page.waitForSelector("#io-rows tr");
+  const gwCell = await page.locator(`#io-rows tr[data-node="${GW}"] td`).nth(2).innerText();
+  assert.match(gwCell, /分岐 \d/, "I/O 一覧の gateway 行に分岐バッジが無い: " + gwCell);
+  assert.doesNotMatch(gwCell, /未記入/, "I/O 一覧の gateway が未記入扱い");
+  // 詳細パネル: gateway 選択時は分岐バッジを出し、未記入バッジは出さない
+  await page.locator(`#io-rows tr[data-node="${GW}"]`).click();
+  await page.waitForSelector("#detail-panel .dt-name");
+  assert.equal((await page.textContent("#detail-panel .dt-name")).trim(), "決済結果", "gateway 行クリックで選択が違う");
+  const head = await page.locator("#detail-panel").evaluate((d) => ({
+    badges: [...d.querySelectorAll(".dt-head + div .badge")].map((b) => b.textContent.trim()),
+    hasEmpty: !!d.querySelector(".badge.empty-io"),
+  }));
+  assert.ok(!head.hasEmpty, "詳細パネルの gateway に未記入バッジ: " + JSON.stringify(head.badges));
+  assert.ok(head.badges.some((t) => /分岐 \d/.test(t)), "詳細パネルに gateway バッジが無い: " + JSON.stringify(head.badges));
+  // 後の検査のためフロー図タブに戻す
+  await page.click('.tab-btn[data-view="flow"]');
+  await page.waitForSelector('#flow-chart .step-box');
 });
 
 test("分岐ノードもクリックで展開（行先一覧）／もう一度でたためる", async () => {
@@ -655,7 +699,8 @@ test("縁の三角は終端接線と同じ向き（▼・分岐・ループ・�
       head: Math.atan2(p[5] - (p[1] + p[3]) / 2, p[4] - (p[0] + p[2]) / 2) * 180 / Math.PI,
     };
   });
-  assert.ok(dn && dn.arrows === 3, "▼ が SVG 矢印として 3 本描画されていない: " + JSON.stringify(dn));
+  // 線形 next の ▼ 3 本 + 開始／終了の目印の ▼ 2 本
+  assert.ok(dn && dn.arrows === 5, "▼ が SVG 矢印として描画されていない: " + JSON.stringify(dn));
   assert.ok(angDiff(dn.stem, dn.head) <= 10, "▼ の軸と三角の向きがズレている: " + JSON.stringify(dn));
   assert.ok(angDiff(dn.head, 90) <= 10, "▼ が真下を向いていない: " + dn.head);
   // 各縁: 実パスの終端接線を getPointAtLength で測り、三角の向き（data-tan）と入る辺の法線へ照合
@@ -720,7 +765,7 @@ function flowGeomAudit() {
     });
     return {
       edge: p.getAttribute("data-edge"), route: p.getAttribute("data-route"), len: L,
-      hspan: p.getBBox().width, start: start, end: end, bad: bad,
+      hspan: p.getBBox().width, start: start, end: end, bad: bad, pts: pts,
     };
   });
   const labels = Array.from(document.querySelectorAll("#flow-edge-labels text")).map((t) => {
@@ -746,12 +791,23 @@ function checkFlowGeom(rep, tag) {
   for (const p of rep.paths) {
     assert.deepEqual(p.bad, [], tag + ": 縁がひし形の中を横切っている: " + p.edge + " → " + p.bad.join(", "));
   }
-  // 2) 出所は常に下頂点（右頂点からの多重放出をやめた）
+  // 2) 出所は前方分岐なら下頂点、ループ／後ろ向き縁なら左頂点（頂点の重複使用をやめた）
   for (const p of rep.paths) {
     const src = rep.gws.find((d) => d.node === p.edge.split("|")[0]);
     if (!src) continue;
-    assert.ok(Math.abs(p.start.x - src.cx) < 4, tag + ": 出所が下頂点の真下にない: " + p.edge);
-    assert.ok(Math.abs(p.start.y - src.y1) < 4, tag + ": 出所が下頂点から出ていない: " + p.edge);
+    if (p.route === "loop") {
+      assert.ok(Math.abs(p.start.x - src.x0) < 4, tag + ": 左頂点から出ていない（x）: " + p.edge);
+      assert.ok(Math.abs(p.start.y - src.cy) < 4, tag + ": 左頂点から出ていない（y）: " + p.edge);
+    } else if (p.route === "vertex") {
+      // 頂点直結は同宛先の条件数だけ下辺に沿って左右へ刻む（ひし形の輪郭の上にあること）
+      const hw = (src.x1 - src.x0) / 2, hh = (src.y1 - src.y0) / 2;
+      const off = Math.abs(Math.abs(p.start.x - src.cx) / hw + (p.start.y - src.cy) / hh - 1);
+      assert.ok(off < 0.08, tag + ": 頂点直結縁の出所がひし形の下辺上にない: " + p.edge + " 差=" + off.toFixed(2));
+      assert.ok(Math.abs(p.start.x - src.cx) <= hw * 0.6, tag + ": 頂点直結縁の出所が頂点から離れすぎ: " + p.edge);
+    } else {
+      assert.ok(Math.abs(p.start.x - src.cx) < 4, tag + ": 出所が下頂点の真下にない: " + p.edge);
+      assert.ok(Math.abs(p.start.y - src.y1) < 4, tag + ": 出所が下頂点から出ていない: " + p.edge);
+    }
   }
   // 3) ゲートウェイ間の「失敗」は頂点から頂点への垂直下降（水平成分 20% 未満）
   const fail = rep.paths.find((p) => p.edge === "step:order-intake/gate-result|next|step:order-intake/retry-gate");
@@ -787,6 +843,23 @@ function checkFlowGeom(rep, tag) {
     const c = { x: (I.x0 + I.x1) / 2, y: (I.y0 + I.y1) / 2 };
     assert.ok(!insidePt(c, d), tag + ": 分岐ノードの ⓘ がひし形の中にある: " + I.node);
   }
+  // 6) 分岐・ループ縁どうしが交差しない（成功経路と打ち切り経路が重なって見えないこと）。
+  //    同じ頂点から出る縁は始点近傍を除外する（頂点を共有するのは仕様どおり）
+  const nearPt = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) < 14;
+  for (let i = 0; i < rep.paths.length; i++) {
+    for (let j = i + 1; j < rep.paths.length; j++) {
+      const A = rep.paths[i], B = rep.paths[j];
+      let cross = null;
+      for (let a = 0; a < A.pts.length - 1 && !cross; a++) {
+        for (let b = 0; b < B.pts.length - 1 && !cross; b++) {
+          if (nearPt(A.pts[a], B.pts[b]) || nearPt(A.pts[a + 1], B.pts[b]) ||
+            nearPt(A.pts[a], B.pts[b + 1]) || nearPt(A.pts[a + 1], B.pts[b + 1])) continue;
+          if (segHit(A.pts[a], A.pts[a + 1], B.pts[b], B.pts[b + 1])) cross = A.pts[a];
+        }
+      }
+      assert.equal(cross, null, tag + ": 分岐縁が交差している: " + A.edge + " × " + B.edge);
+    }
+  }
   assert.ok(rep.labels.length >= 4, tag + ": 縁ラベルが少ない: " + rep.labels.map((l) => l.text).join("/"));
 }
 
@@ -802,6 +875,271 @@ test("分岐縁は下頂点から出てひし形を横切らない（頂点の�
   checkFlowGeom(await page.evaluate(flowGeomAudit), "全展開");
   await page.screenshot({ path: join(SHOTS, "01h-branch-expanded.png") });
   await page.click("#btn-collapse-all");
+});
+
+// ラベル無し分岐・同一端点の並行縁・自己ループは実データに無いので合成グラフで検査する
+function synthGraph() {
+  const edges = [];
+  const E = (source, target, kind, metadata) => edges.push(
+    metadata ? { source, target, kind, provenance: "definition", confidence: 1, metadata }
+      : { source, target, kind, provenance: "definition", confidence: 1 });
+  ["s1", "s2", "s3", "s4", "s5"].forEach((id, i) => E("flow:sync", "step:sync/" + id, "contains", { order: i + 1 }));
+  E("step:sync/s1", "step:sync/s2", "next", { order: 2 });
+  E("step:sync/s2", "step:sync/s3", "next", { order: 3 });
+  E("step:sync/s3", "step:sync/s4", "next", { order: 4 });
+  E("step:sync/s4", "step:sync/s5", "next", { order: 5 });
+  // ラベルの無い非隣接分岐（旧実装は中央 ▼ に吸収して消していた）
+  E("step:sync/s2", "step:sync/s4", "next", { order: 4 });
+  // 同一端点の並行縁（条件違い）
+  E("step:sync/s2", "step:sync/s4", "next", { order: 4, label: "リトライ" });
+  E("step:sync/s2", "step:sync/s4", "next", { order: 4, label: "フォールバック" });
+  E("step:sync/s2", "step:sync/s4", "next", { order: 4, label: "条件名が長い場合は折り返さず左右どちらかへ寄せる" });
+  E("step:sync/s2", "step:sync/s4", "next", { order: 4, label: "打ち切り" });
+  // ゲートウェイ同士で宛先が同じ 2 条件（頂点直結が重なってはいけない）
+  E("step:sync/s2", "step:sync/s3", "next", { order: 3, label: "経路A" });
+  E("step:sync/s2", "step:sync/s3", "next", { order: 3, label: "経路B" });
+  // 自身に戻る分岐（source === target）
+  E("step:sync/s3", "step:sync/s3", "next", { order: 3, label: "やり直し", loop: true });
+  // 同じ格納先を読む／書く
+  E("step:sync/s4", "store:table/sync-state", "reads", { access: "read" });
+  E("step:sync/s4", "store:table/sync-state", "writes", { access: "write" });
+  // API の向こうの格納先を読む縁（サブカード側も 格納先 → API の向きで描く）
+  E("step:sync/s3", "boundary:http/sync-api/fetch", "invokes");
+  E("boundary:http/sync-api/fetch", "store:table/sync-state", "reads", { access: "read" });
+  const step = (id, name, md) => Object.assign(
+    { id: "step:sync/" + id, kind: "step", name: name, parent: "flow:sync", metadata: { provenance: "definition" } },
+    md ? { metadata: Object.assign({ provenance: "definition" }, md) } : {});
+  return {
+    schemaVersion: 1, generatedAt: "2026-01-01T00:00:00Z", root: "flow:sync", warnings: [],
+    nodes: [
+      { id: "flow:sync", kind: "flow", name: "検査用フロー", metadata: { provenance: "definition" } },
+      step("s1", "取り込み"),
+      step("s2", "振り分け", { stepKind: "gateway", description: "ラベル無し分岐を検証する門" }),
+      step("s3", "同期待ち", { stepKind: "gateway", description: "自分自身へ戻る分岐" }),
+      step("s4", "反映"),
+      step("s5", "後処理"),
+      { id: "store:table/sync-state", kind: "store", name: "sync-state", metadata: { storeKind: "table", provenance: "definition" } },
+      { id: "boundary:http/sync-api/fetch", kind: "boundary", name: "sync-api/fetch", metadata: { boundaryKind: "http", provenance: "definition" } },
+    ],
+    edges,
+  };
+}
+
+// 縁の縦走り（ガター）の x を最頻値で測る。ページ側で走る自己完結の関数
+const runXs = (els) => els.map((el) => {
+  const L = el.getTotalLength();
+  const c = {};
+  for (let i = 0; i <= L; i += 4) {
+    const x = Math.round(el.getPointAtLength(i).x);
+    c[x] = (c[x] || 0) + 1;
+  }
+  return Number(Object.keys(c).sort((a, b) => c[b] - c[a])[0]);
+});
+
+// レーン基準のボックス位置（縁の始点・終点は #flow-chart 基準の座標で描かれる）
+const boxOf = (p, sel) => p.evaluate((sel) => {
+  const lane = document.querySelector("#flow-chart").getBoundingClientRect();
+  const r = document.querySelector(sel).getBoundingClientRect();
+  return {
+    x0: r.left - lane.left, y0: r.top - lane.top, x1: r.right - lane.left, y1: r.bottom - lane.top,
+    cx: (r.left + r.right) / 2 - lane.left, cy: (r.top + r.bottom) / 2 - lane.top,
+  };
+}, sel);
+
+async function openFile(absPath, hash, sink) {
+  const p = await context.newPage();
+  const errs = sink || consoleErrors;
+  p.on("console", (m) => { if (m.type() === "error") errs.push("[console] " + m.text()); });
+  p.on("pageerror", (e) => errs.push("[pageerror] " + String(e && e.message ? e.message : e)));
+  await p.goto(pathToFileURL(absPath).href + (hash || ""));
+  await p.waitForSelector("#status-bar", { timeout: 15000 });
+  return p;
+}
+
+test("読み取り縁は「格納先 → タスク」向きに描く（データ上の向きは step → store のまま）", async () => {
+  await page.evaluate(() => window.__flowViewer.setView("flow"));
+  await page.click("#btn-collapse-all");
+  await page.waitForTimeout(200);
+  await page.click('.step-box[data-node="step:order-intake/receive"]');
+  await waitForEdgesAtLeast(page, 3);
+  await page.waitForTimeout(250);
+  const geo = await page.evaluate(() => {
+    const p = document.querySelector('#flow-edges path.edge.reads[data-edge="step:order-intake/receive|reads|store:table/order-drafts"]');
+    if (!p) return null;
+    const L = p.getTotalLength();
+    const m = p.getScreenCTM();
+    const to = (pt) => ({ x: m.a * pt.x + m.c * pt.y + m.e, y: m.b * pt.x + m.d * pt.y + m.f });
+    const rect = (sel) => {
+      const r = document.querySelector(sel).getBoundingClientRect();
+      return { x0: r.left, x1: r.right, y0: r.top, y1: r.bottom };
+    };
+    return {
+      face: p.getAttribute("data-face"),
+      start: to(p.getPointAtLength(0)), end: to(p.getPointAtLength(L)),
+      card: rect('.fc-side .fnode[data-node="store:table/order-drafts"]'),
+      box: rect('.step-box[data-node="step:order-intake/receive"]'),
+    };
+  });
+  assert.ok(geo, "reads 縁が描画されていない");
+  assert.ok(Math.abs(geo.start.x - geo.card.x1) <= 4 && geo.start.y >= geo.card.y0 - 4 && geo.start.y <= geo.card.y1 + 4,
+    "読み取り縁が格納先カードから始まっていない: " + JSON.stringify(geo));
+  assert.ok(Math.abs(geo.end.x - geo.box.x0) <= 4 && geo.end.y >= geo.box.y0 - 4 && geo.end.y <= geo.box.y1 + 4,
+    "読み取り縁がステップ箱の左辺へ入っていない: " + JSON.stringify(geo));
+  assert.equal(geo.face, "right", "三角が箱の左辺（+x 方向）を向いていない");
+  await page.screenshot({ path: join(SHOTS, "01i-reads-direction.png") });
+  await page.click('.step-box[data-node="step:order-intake/receive"]');
+  await page.waitForTimeout(200);
+});
+
+test("詳細パネル: コード抜粋を開いたまま別ノードを選ぶと抜粋が消える", async () => {
+  await page.click('.tab-btn[data-view="code"]');
+  await page.waitForSelector("#code-list .code-item");
+  // 前の検査で展開済みならヘッダークリックは「閉じる」動作になるので確かめてから押す
+  const sig = '#code-list [data-code="code:src/handlers/create_order.py"] table.signals';
+  if (!(await page.locator(sig).count())) {
+    await page.click('#code-list [data-code="code:src/handlers/create_order.py"] .code-head');
+  }
+  await page.waitForSelector(sig);
+  await page.click('#code-list [data-code="code:src/handlers/create_order.py"] td.snip >> nth=1');
+  await page.waitForSelector("#detail-panel #detail-evidence");
+  await page.waitForTimeout(150);
+  const loc = await page.innerText("#detail-panel #detail-evidence .loc");
+  assert.match(loc, /create_order\.py/, "抜粋のファイル名が違う: " + loc);
+  await page.evaluate(() => window.__flowViewer.selectNode("flow:order-intake"));
+  await page.waitForTimeout(200);
+  assert.equal(await page.locator("#detail-panel #detail-evidence").count(), 0,
+    "縁と無関係なノードの詳細に前のコード抜粋が残っている");
+  await page.click('.tab-btn[data-view="flow"]');
+  await page.waitForTimeout(150);
+});
+
+test("合成グラフ: ラベル無し分岐も描く／同一端点の並行縁は扇／自己ループは ↺／API の向こうも格納先向き", async () => {
+  const dir = join(OUT, "synth");
+  const json = join(dir, "branch-synth.json");
+  const html = join(dir, "branch-synth.html");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(json, JSON.stringify(synthGraph(), null, 1));
+  const r = spawnSync(process.execPath,
+    [join(ROOT, "bin", "render.mjs"), "--graph", json, "--out", html, "--title", "並行縁の検査"], { encoding: "utf8" });
+  assert.equal(r.status, 0, "合成グラフの描画に失敗: " + r.stderr);
+  const errs = [];
+  const p = await openFile(html, "#view=flow", errs);
+  await p.waitForSelector(".step-box");
+  await waitForEdgesAtLeast(p, 0);
+  await p.waitForTimeout(250);
+
+  // 1) ラベルの有無に関係なく、非隣接の分岐 next は全部 SVG 経路で描かれる
+  const par = '#flow-edges path.edge[data-edge="step:sync/s2|next|step:sync/s4"]';
+  assert.equal(await p.locator(par).count(), 5, "s2 → s4 の分岐縁が 5 本（ラベル無し込み）描かれていない");
+  // 2) 同一端点の並行縁は重ならない（縦走りの x が 6px 以上離れる）
+  const runs = await p.locator(par).evaluateAll(runXs);
+  const spread = Math.min.apply(null, runs.slice(1).map((x, i) => Math.abs(x - runs[i])));
+  assert.equal(new Set(runs).size, 5, "並行縁が同じ経路に重なっている: " + JSON.stringify(runs));
+  assert.ok(spread >= 8, "並行縁の横オフセットが 8px 未満（扇になっていない）: " + JSON.stringify(runs));
+  // 3) 自身に戻る分岐は左頂点から出て左側を回る ↺ 縁（詳細パネルの縁一覧にも出る）
+  // 2b) ゲートウェイ同士・同宛先（頂点直結）の 2 条件は重ならず左右に分かれる
+  const vert = '#flow-edges path.edge[data-edge="step:sync/s2|next|step:sync/s3"]';
+  const vPaths = await p.locator(vert).evaluateAll((ps) => ps.map((el) => {
+    const L = el.getTotalLength();
+    const q = el.getPointAtLength(L * 0.5);
+    return Math.round(q.x * 10) / 10;
+  }));
+  assert.ok(vPaths.length >= 2, "ゲートウェイ同士の同宛先縁が " + vPaths.length + " 本しかない");
+  assert.ok(new Set(vPaths).size === vPaths.length, "頂点直結の同宛先縁が重なっている: " + JSON.stringify(vPaths));
+  const vGap = Math.min.apply(null, vPaths.slice(1).map((x, i) => Math.abs(x - vPaths[i])));
+  assert.ok(vGap >= 6, "頂点直結の同宛先縁の間隔が狭い（" + vGap.toFixed(1) + "px）: " + JSON.stringify(vPaths));
+  // 2c) ラベル同士、ラベルと縁の終端（矢印）が重なっていないか
+  const lab = await p.evaluate(() => {
+    const ts = Array.prototype.slice.call(document.querySelectorAll("#flow-edge-labels text"));
+    const rs = ts.map((t) => {
+      const r = t.getBoundingClientRect();
+      return { x: r.left, y: r.top, w: r.width, h: r.height, s: (t.textContent || "").trim() };
+    }).filter((r) => r.w > 1);
+    const pairs = [];
+    for (let i = 0; i < rs.length; i++) {
+      for (let j = i + 1; j < rs.length; j++) {
+        const A = rs[i], B = rs[j];
+        const w = Math.min(A.x + A.w, B.x + B.w) - Math.max(A.x, B.x);
+        const h = Math.min(A.y + A.h, B.y + B.h) - Math.max(A.y, B.y);
+        if (w > 1 && h > 1) pairs.push(A.s + " × " + B.s);
+      }
+    }
+    const hits = [];
+    Array.prototype.forEach.call(document.querySelectorAll("#flow-edges path.edge"), (el) => {
+      const L = el.getTotalLength();
+      let n = 0;
+      for (let i = Math.max(0, L - 16); i <= L; i += 3) {
+        const q = el.getPointAtLength(i).matrixTransform(el.getScreenCTM());
+        if (rs.some((r) => q.x >= r.x && q.x <= r.x + r.w && q.y >= r.y && q.y <= r.y + r.h)) n++;
+      }
+      if (n >= 3) hits.push(el.getAttribute("data-edge"));
+    });
+    return { n: rs.length, pairs, hits };
+  });
+  assert.deepEqual(lab.pairs, [], "条件ラベル同士が重なっている: " + lab.pairs.join(" / "));
+  assert.deepEqual(lab.hits, [], "条件ラベルと縁の終端（矢印）が重なっている: " + lab.hits.join(" / "));
+
+  // 3) 自身に戻る分岐は左頂点から出て左側を回る ↺ 縁（詳細パネルの縁一覧にも出る）
+  const self = '#flow-edges path.edge.loop[data-edge="step:sync/s3|next|step:sync/s3"]';
+  assert.equal(await p.locator(self).count(), 1, "自己ループ縁が描かれない");
+  const d = await p.locator(self).getAttribute("d");
+  const n = d.match(/[-\d.]+/g).map(Number);
+  const gw = await boxOf(p, '.step-box[data-node="step:sync/s3"]');
+  assert.equal(await p.locator(self).getAttribute("data-route"), "loop", "自己ループの経路種別が違う");
+  assert.ok(Math.abs(n[0] - gw.x0) <= 2 && Math.abs(n[1] - gw.cy) <= 2,
+    "自己ループが左頂点から出ていない: " + d);
+  const selfLbl = await p.locator("#flow-edge-labels text.loop").evaluateAll((ts) => ts.map((t) => t.textContent));
+  assert.ok(selfLbl.some((t) => /↺/.test(t) && /やり直し/.test(t)),
+    "自己ループのラベルが無い: " + JSON.stringify(selfLbl));
+  // 3b) 全展開の狭い通路でも並行縁は同じ x に潰れない（全展開で各ステップの I/O も出る）
+  await p.click("#btn-expand-all");
+  await waitForEdgesAtLeast(p, 3);
+  await p.waitForTimeout(300);
+  const runsOpen = await p.locator(par).evaluateAll(runXs);
+  assert.ok(new Set(runsOpen).size >= 2, "全展開で並行縁が同じ x に潰れている: " + JSON.stringify(runsOpen));
+  // 4) 同じ格納先を読む／書く縁は向きが違う（読み=格納先→箱、書き=箱→格納先）
+  const io = await p.evaluate(() => {
+    const one = (sel) => {
+      const p2 = document.querySelector(sel);
+      if (!p2) return null;
+      const L = p2.getTotalLength();
+      const m = p2.getScreenCTM();
+      const to = (pt) => ({ x: m.a * pt.x + m.c * pt.y + m.e, y: m.b * pt.x + m.d * pt.y + m.f });
+      return { face: p2.getAttribute("data-face"), start: to(p2.getPointAtLength(0)), end: to(p2.getPointAtLength(L)) };
+    };
+    const box = document.querySelector('.step-box[data-node="step:sync/s4"]').getBoundingClientRect();
+    return {
+      read: one('#flow-edges path.edge.reads[data-edge="step:sync/s4|reads|store:table/sync-state"]'),
+      write: one('#flow-edges path.edge.writes[data-edge="step:sync/s4|writes|store:table/sync-state"]'),
+      box: { x0: box.left, x1: box.right, y0: box.top, y1: box.bottom },
+    };
+  });
+  assert.ok(io.read && io.write, "同じ格納先への reads / writes が両方描かれていない: " + JSON.stringify(io));
+  assert.ok(io.read.start.x < io.box.x0 && Math.abs(io.read.end.x - io.box.x0) <= 4,
+    "reads が 格納先 → 箱 の向きで描かれていない: " + JSON.stringify(io.read));
+  assert.ok(Math.abs(io.write.start.x - io.box.x1) <= 4 && io.write.end.x > io.box.x1 + 6,
+    "writes が 箱 → 格納先 の向きで描かれていない: " + JSON.stringify(io.write));
+  // 5) API の向こうの格納先を読む縁も「格納先 → API」向き
+  const sub = await p.evaluate(() => {
+    const p2 = document.querySelector('#flow-edges path.edge.reads[data-edge="boundary:http/sync-api/fetch|reads|store:table/sync-state"]');
+    if (!p2) return null;
+    const L = p2.getTotalLength();
+    const r1 = document.querySelector('.fc-side .sub-card[data-node="store:table/sync-state"]').getBoundingClientRect();
+    const r2 = document.querySelector('.fc-side .fnode[data-node="boundary:http/sync-api/fetch"]').getBoundingClientRect();
+    const m = p2.getScreenCTM();
+    const to = (pt) => ({ x: m.a * pt.x + m.c * pt.y + m.e, y: m.b * pt.x + m.d * pt.y + m.f });
+    const inRect = (q, r) => q.x >= r.left - 5 && q.x <= r.right + 5 && q.y >= r.top - 5 && q.y <= r.bottom + 5;
+    return {
+      startInStore: inRect(to(p2.getPointAtLength(0)), r1),
+      endInBoundary: inRect(to(p2.getPointAtLength(L)), r2),
+    };
+  });
+  assert.ok(sub, "API の向こうの格納先への reads 縁が無い");
+  assert.ok(sub.startInStore && sub.endInBoundary,
+    "API の向こうの格納先が 格納先 → API の向きで描かれていない: " + JSON.stringify(sub));
+  assert.deepEqual(errs, [], "合成グラフでコンソールエラー: " + errs.join(" / "));
+  await p.screenshot({ path: join(SHOTS, "04-synth-branch.png") });
+  await p.close();
 });
 
 test("グラフタブ（canvas）の縁にも終端三角があり、向きは atan2 の実測と一致する", async () => {

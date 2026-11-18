@@ -188,6 +188,14 @@ aside.detail {
 @media (max-width: 1000px) {
   main.body { grid-template-columns: minmax(0, 1fr) 320px; }
 }
+@media (max-width: 760px) {
+  /* 狭い画面では詳細パネルを下へ積む。横に 320px 確保すると本文が 40px に潰れるため */
+  main.body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1.5fr) minmax(0, 1fr); }
+  aside.detail { border-left: 0; border-top: 1px solid var(--line); }
+  /* フィルタチップが折り返すと本文が沈むので、狭い画面では 1 行を横スクロールさせる */
+  .filter-row { flex-wrap: nowrap; overflow-x: auto; gap: 10px; padding-bottom: 2px; }
+  .filter-row .chip-group, .filter-row .chip, .filter-row .btn { flex: 0 0 auto; flex-wrap: nowrap; }
+}
 
 /* ---------- ステータスバー ---------- */
 footer.status {
@@ -248,7 +256,9 @@ table.grid tbody tr.sel { background: var(--bg-sel); }
 /* ---------- フロー図（フローチャート） ---------- */
 .flow-scroll { height: 100%; overflow: auto; }
 .flow-bar {
-  position: sticky; top: 0; z-index: 4; display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+  /* レーンより狭い画面では本体が横スクロールになるので、バーは上下左右に固定して常に見えるようにする */
+  position: sticky; top: 0; left: 0; width: 100%; box-sizing: border-box;
+  z-index: 4; display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
   font-size: 11px; color: var(--muted); padding: 7px 6px 9px;
   background: linear-gradient(180deg, var(--bg) 68%, var(--fade-a) 88%, var(--fade-b));
   border-bottom: 1px solid var(--line-soft);
@@ -281,9 +291,48 @@ table.grid tbody tr.sel { background: var(--bg-sel); }
 #flow-edge-labels text.dimmed { opacity: .2; }
 .fc-row { display: flex; align-items: flex-start; gap: 20px; position: relative; z-index: 1; }
 .fc-mid { flex: 0 0 440px; min-width: 0; }
-.fc-side { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding-top: 2px; }
+.fc-side-slot { flex: 1 1 0; min-width: 0; height: 0; position: relative; z-index: 2; align-self: center; }
+/* サイド列は中央の行の垂直中央に置く。行数を増やさず、はみ出しは上下の 20px 通路へ
+   等分に広がるので、次の行のカードを隠さない。高さは measureEdges で中央の行+len に抑える */
+.fc-side {
+  min-width: 0; display: flex; flex-direction: column; gap: 4px; padding: 0 2px;
+  overflow-y: auto; background: var(--bg0); border-radius: 8px; transform: translateY(-50%);
+}
+/* サイドカードは 1 行に縮める（行の高さは中央のボックスだけで決める） */
+.fc-side .fnode { padding: 3px 7px; display: flex; align-items: center; flex-wrap: nowrap; gap: 6px; }
+.fc-side .fnode .id, .fc-side .fnode .meta { display: none; }
+.fc-side .fnode > .t { flex: 1 1 auto; min-width: 0; gap: 5px; }
+.fc-side .fnode > .pvs { flex: 0 1 auto; margin-top: 0; flex-wrap: nowrap; overflow: hidden; }
+.fc-side .fnode > .pvs > * { flex: 0 0 auto; white-space: nowrap; }
+/* 件数が多い列は 2 列に折り返して高さを抑える（measureEdges 前の確定判断） */
+/* 件数の多い列は横方向に折り返す（縦フレックスのままだと列方向に折れてしまう） */
+.fc-side.multi { flex-direction: row; flex-wrap: wrap; align-content: flex-start; }
+.fc-side.multi > * { flex: 1 1 44%; min-width: 0 }
+.fc-side.multi > .sub-wrap { margin-left: 0; flex: 1 1 100% }
+.fc-side > .side-head, .fc-side > .hint, .fc-side > .gw-note { flex: 1 1 100% }
+.io-mark {
+  flex: 0 0 auto; font-size: 10px; font-weight: 700; line-height: 1.5;
+  border: 1px solid var(--line); border-radius: 4px; padding: 0 3px; color: var(--dim);
+}
+.io-mark[data-io="reads"] { color: var(--e-reads); border-color: var(--e-reads); }
+.io-mark[data-io="writes"] { color: var(--e-writes); border-color: var(--e-writes); }
+.io-mark[data-io="invokes"] { color: var(--e-invokes); border-color: var(--e-invokes); }
+/* 分岐ノードの説明・ID はひし形の外（左列）に出す */
+.gw-note {
+  border: 1px dashed var(--line); background: var(--bg-sub); border-radius: 6px;
+  padding: 5px 8px; font-size: 11px;
+}
+.gw-note .gn-id { font-family: var(--mono); font-size: 10px; color: var(--dim); word-break: break-all; }
+.gw-note .gn-desc { color: var(--muted); margin-top: 3px; line-height: 1.5; }
 .fc-arrow-row .fc-arrow { flex: 0 0 440px; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--dim); font-size: 11px; padding: 4px 0; position: relative; z-index: 1; }
-.fc-arrow-row .fc-side { visibility: hidden; }
+.fc-arrow-row .fc-side-slot { visibility: hidden; }
+/* 開始・終了の目印（next 縁がない先頭・末尾だけに置く） */
+.fc-term-row .fc-mid { text-align: center; }
+.fc-term-row .term {
+  display: inline-flex; align-items: center; height: 24px; padding: 0 16px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--bg3);
+  color: var(--muted); font-size: 11px; letter-spacing: .06em;
+}
 .fc-arrow .fc-arrow-svg { display: block; }
 .fc-arrow-svg .stem { stroke: var(--accent); stroke-width: 1.7; fill: none; }
 .fc-arrow-svg .head { fill: var(--accent); }
@@ -333,8 +382,7 @@ table.grid tbody tr.sel { background: var(--bg-sel); }
 /* ひし形に四角い outline は似合わないので、選択・強調は疑似要素側の色で出す */
 .step-box.gw.selected, .step-box.gw.hl { outline: none; }
 .step-box.gw.selected::before { background: var(--accent); filter: drop-shadow(0 0 5px var(--accent-glow)); }
-/* 展開時は id と説明が入るので、ひし形の usable 領域を広げる */
-.step-box.gw.expanded { width: 100%; padding: 30px 74px; }
+/* 展開してもひし形の大きさは変えない（id と説明は左列のメモへ回すため、中身は名前と分岐数だけ） */
 .step-box.gw .t, .step-box.gw .pvs { justify-content: center; }
 .step-box.gw .id, .step-box.gw .meta { text-align: center; }
 /* ⓘ は頂点上に置かない（頂点に刺さった縁と見分けがつかないため）。
@@ -986,6 +1034,7 @@ html[data-theme="light"] {
     if (!n) { toast("ノードが見つかりません: " + id); return; }
     state.selected = id;
     state.detailEdge = null;
+    state.detailEvidence = null; // 前のノードのコード抜粋を残さない
     if (n.kind === "step" && n.parent && state.byId.get(n.parent)) state.flowId = n.parent;
     else if (n.kind === "flow") state.flowId = n.id;
     if (opts.view && views[opts.view]) {
@@ -1215,6 +1264,7 @@ html[data-theme="light"] {
     appliedMetaKeys = new Set();
     state.selected = null;
     state.detailEdge = null;
+    state.detailEvidence = null;
     rebuildFromScratch();
     toast("ローカル注釈をクリアしました");
   }
@@ -1260,12 +1310,31 @@ html[data-theme="light"] {
       this.root.appendChild(this.scroll);
       // レーン相対の座標はスクロールで変わらないので、スクロール時は計測せず描き直すだけ
       this.scroll.addEventListener("scroll", function () { self.scheduleEdges(); });
+      // サイド列は独自スクロールするので、そのスクロールで縁の終端がずれる
+      this.lane.addEventListener("scroll", function () { self.measureEdges(); self.scheduleEdges(); }, true);
       window.addEventListener("resize", function () {
         if (state.view !== "flow") return;
+        self.centerX();
         self.measureEdges();
         self.scheduleEdges();
       });
       this.built = true;
+    },
+    // 狭い画面では中央レーンが通路ごと左へ押されて見切れる。横に はみ出すときは
+    // 中央のボックス列が見える位置まで寄せる（左側の通路だけ映っても意味がないため）
+    centerX: function () {
+      var sc = this.scroll;
+      if (!sc) return;
+      var over = sc.scrollWidth - sc.clientWidth;
+      if (over <= 8 || this.lastClientW === sc.clientWidth) return;
+      this.lastClientW = sc.clientWidth;
+      var mid = this.lane ? this.lane.querySelector(".fc-mid") : null;
+      if (mid) {
+        var mr = mid.getBoundingClientRect(), pr = sc.getBoundingClientRect();
+        sc.scrollLeft += (mr.left + mr.width / 2) - (pr.left + pr.width / 2);
+      } else {
+        sc.scrollLeft = Math.round(over / 2);
+      }
     },
     // ---- ツールバー ----
     renderBar: function (flow, steps) {
@@ -1281,17 +1350,19 @@ html[data-theme="light"] {
         onclick: function () { self.expandAll(false); } }, "全たたむ"));
       this.bar.appendChild(el("span", { class: "hintline", id: "flow-hint" },
         "ボックスをクリックすると入出力を展開（もう一度でたたむ）／右上の ⓘ で詳細パネル／ストア・境界カードを選ぶと結ばれたステップを強調"));
-      [["reads", "読み取り reads"], ["writes", "書き込み writes"], ["invokes", "呼び出し invokes"]].forEach(function (p) {
+      var lg = el("span", { class: "legend", id: "flow-legend" });
+      [["reads", "読み取り reads"], ["writes", "書き込み writes"], ["invokes", "呼び出し invokes"],
+       ["next", "分岐 next"], ["loop", "ループ"]].forEach(function (p) {
         var i = el("i", { class: p[0] });
         i.style.borderColor = "var(--e-" + p[0] + ")";
-        this.bar.appendChild(el("span", {}, i, p[1]));
-      }, this);
-      [["next", "分岐 next"], ["loop", "ループ"]].forEach(function (p) {
-        var i = el("i", { class: p[0] });
-        i.style.borderColor = "var(--e-" + p[0] + ")";
-        this.bar.appendChild(el("span", {}, i, p[1]));
-      }, this);
-      this.bar.appendChild(el("span", {}, el("i", { class: "dash", style: "border-color:var(--dim)" }), "破線 = LLM / 人間の注釈"));
+        lg.appendChild(el("span", {}, i, p[1]));
+      });
+      var iv = el("i", { class: "go" });
+      iv.style.borderColor = "var(--accent)";
+      lg.appendChild(el("span", {}, iv, "通常進行 ▼"));
+      lg.appendChild(el("span", {},
+        el("i", { class: "dash", style: "border-color:var(--dim)" }), "破線 = LLM / 人間の注釈"));
+      this.bar.appendChild(lg);
       this.hudCull = el("span", { class: "hint", id: "flow-cull-note", style: "display:none" }, "");
       this.bar.appendChild(this.hudCull);
     },
@@ -1313,15 +1384,35 @@ html[data-theme="light"] {
       var placed = new Set();
       var shown = steps.slice(0, this.limit);
       var boxes = new Map();
+      this.stepIdx = new Map();    // 行順（通路の深さを決める基準）
+      this.linearUsed = new Set(); // ▼ に割り当てた next 縁
       shown.forEach(function (st, i) {
+        self.stepIdx.set(st.id, i);
+        if (i === 0) {
+          // フローの入口（開始）の目印
+          self.lane.appendChild(self.termRow("開始"));
+          self.lane.appendChild(self.arrowRow());
+        }
         // ▼ は「配列で隣接 + ラベルの無い next 縁が順方向」の間にだけ置く。
         // 分岐（label 付き）とループは側面を回る縁で描くので ▼ は冗長になる。
-        if (i > 0 && linearNextEdge(steps[i - 1].id, st.id)) self.lane.appendChild(self.arrowRow());
+        if (i > 0 && linearNextEdge(steps[i - 1].id, st.id)) {
+          self.linearUsed.add(steps[i - 1].id + "|" + st.id);
+          self.lane.appendChild(self.arrowRow());
+        }
         var row = self.stepRow(st.node, i + 1, placed);
         var bx = row.querySelector(".step-box");
         if (bx) boxes.set(st.id, bx);
         self.lane.appendChild(row);
       });
+      var lastId = shown.length ? shown[shown.length - 1].id : "";
+      var fwdOut = outsOf(lastId).some(function (e) {
+        return e.kind === "next" && (self.stepIdx.get(e.target) || 0) > (self.stepIdx.get(lastId) || 0);
+      });
+      if (lastId && !fwdOut) {
+        // フローの終点（終了）の目印。次段がある場合（「さらに表示」）は出さない
+        this.lane.appendChild(this.arrowRow());
+        this.lane.appendChild(this.termRow("終了"));
+      }
       this.collectLinks(boxes);
       if (steps.length > shown.length) {
         this.more.textContent = "さらに " + Math.min(FLOW_COL_CAP, steps.length - shown.length) + " 件表示";
@@ -1330,39 +1421,89 @@ html[data-theme="light"] {
         this.lane.appendChild(this.moreWrap);
       }
       this.renderCandidates(placed);
+      this.centerX();
       this.measureEdges();
       this.scheduleEdges();
       this.crossHighlight();
     },
-    // ステップ ⇄ ステップの分岐・ループ縁（label 付き next と metadata.loop）は展開と無関係に常時描く
+    // ステップ間の next 縁を側面ガターに描く。中央の ▼ に割り当てた 1 本以外は
+    // ラベルの有無にかかわらず全部描く（ラベル無しの非隣接分岐が消えないように）。
     collectLinks: function (boxes) {
       var self = this;
-      var fan = new Map(); // 同じ出所が重なるので横にずらす
+      var idx = this.stepIdx || new Map();
+      var fan = new Map(); // 同じ出所の縁を刻む（ガター深さと進入点をずらす）
+      var vfan = new Map(); // 頂点直結（ひし形同士）を刻む。同じ頂点に重ねない
       boxes.forEach(function (fromEl, id) {
         outsOf(id).forEach(function (e) {
-          if (e.kind !== "next") return;
-          var md = e.metadata || {};
-          if (!md.label && !md.loop) return; // 線形 next は ▼ が担当
           var toEl = boxes.get(e.target);
           if (!toEl) return; // フィルタ外・「さらに表示」の先は描かない
+          if (e.kind !== "next") return;
+          if (!state.filters.provs.has(e.provenance)) return;
+          var md = e.metadata || {};
+          var key = id + "|" + e.target;
+          if (!md.label && !md.loop && self.linearUsed.has(key)) {
+            self.linearUsed.delete(key); // ▼ が担う 1 本だけ抜く（同じ宛先の並行縁は側面へ出す）
+            return;
+          }
+          var isSelf = e.target === id;
           var srcGw = fromEl.classList.contains("gw");
           var dstGw = toEl.classList.contains("gw");
-          // ゲートウェイ同士の分岐は頂点から頂点への直結（ひし形の辺を横切らないため）
-          var vert = srcGw && dstGw && !md.loop;
-          var k = 0;
-          if (!vert) {
-            k = fan.get(id) || 0; // 頂点直結はガターを通らないので刻まない
+          var down = !isSelf && (idx.get(e.target) || 0) > (idx.get(id) || 0);
+          var back = isSelf || !down;      // 戻る縁は左回り
+          var loop = !!md.loop || isSelf;  // 赤い ↺ 縁として描くか
+          // ゲートウェイ同士の前方分岐は頂点から頂点への直結（ひし形の辺を横切らないため）
+          var vert = srcGw && dstGw && !loop && !back;
+          var k = 0, vk = 0;
+          if (vert) {
+            var vkKey = id + "|" + e.target;
+            vk = vfan.get(vkKey) || 0;   // 同宛先の条件違いは頂点を左右に刻む
+            vfan.set(vkKey, vk + 1);
+          } else {
+            k = fan.get(id) || 0;
             fan.set(id, k + 1);
           }
-          // 下頂点から扇を出す分、次の行との間隔を広げる（ループのみのノードは下らないので据え置き）
-          if (!md.loop) fromEl.classList.add("fan-gap");
+          // 下頂点から扇を出す分、次の行との間隔を広げる（左頂点から出る縁は下らないので据え置き）
+          if (!back) fromEl.classList.add("fan-gap");
           self.linkItems.push({
             link: true, edge: e, fromEl: fromEl, toEl: toEl,
-            loop: !!md.loop, label: md.label || "", fan: k,
-            srcGw: srcGw, dstGw: dstGw, vert: vert,
+            loop: loop, back: back, self: isSelf, label: md.label || "",
+            fan: k, side: back ? "left" : "right", chan: 0,
+            srcGw: srcGw, dstGw: dstGw, vert: vert, vfan: vk,
           });
         });
       });
+      // 同じ側で絡み合う（s < s' < t < t' のように区間が交差する）2 本は平面に描けないので、
+      // 下の行から出る縁を反対側へ回す。
+      this.linkItems.forEach(function (it) {
+        if (it.vert || it.side !== "right") return;
+        var s0 = idx.get(it.edge.source) || 0, t0 = idx.get(it.edge.target) || 0;
+        self.linkItems.forEach(function (o2) {
+          if (o2 === it || o2.vert || o2.side !== "right") return;
+          var s1 = idx.get(o2.edge.source) || 0, t1 = idx.get(o2.edge.target) || 0;
+          var cross = (s0 < s1 && s1 < t0 && t0 < t1) || (s1 < s0 && s0 < t1 && t1 < t0);
+          if (cross && s0 > s1) it.side = "left";
+        });
+      });
+      // 通路の深さを出所ごとに決める。下の行から出る縁ほど内側、上の行から出る縁ほど外側。
+      // 逆だと下の行の縁が上の行の通路を跨ぎ、途中のボックスの背後に隠れるため。
+      ["left", "right"].forEach(function (side) {
+        var srcs = [];
+        self.linkItems.forEach(function (it) {
+          if (it.side === side && srcs.indexOf(it.fromEl) < 0) srcs.push(it.fromEl);
+        });
+        srcs.sort(function (a, b) {
+          return (idx.get(b.dataset.node) || 0) - (idx.get(a.dataset.node) || 0);
+        });
+        self.linkItems.forEach(function (it) {
+          if (it.side === side) it.chan = srcs.indexOf(it.fromEl);
+        });
+      });
+    },
+    termRow: function (label) {
+      return el("div", { class: "fc-row fc-term-row" },
+        el("div", { class: "fc-side-slot" }),
+        el("div", { class: "fc-mid" }, el("span", { class: "term" }, label)),
+        el("div", { class: "fc-side-slot" }));
     },
     arrowRow: function () {
       return el("div", { class: "fc-row fc-arrow-row" },
@@ -1377,7 +1518,9 @@ html[data-theme="light"] {
       var right = el("div", { class: "fc-side right", dataset: { side: "right", for: n.id } });
       if (open) this.fillSides(n, box, left, right, placed);
       return el("div", { class: "fc-row" + (open ? " open" : ""), dataset: { row: n.id } },
-        left, el("div", { class: "fc-mid" }, box), right);
+        el("div", { class: "fc-side-slot" }, left),
+        el("div", { class: "fc-mid" }, box),
+        el("div", { class: "fc-side-slot" }, right));
     },
     // 折りたたみ時のステップボックス（番号・名前・小バッジだけ）
     stepBox: function (n, order, open) {
@@ -1415,8 +1558,9 @@ html[data-theme="light"] {
           badges,
           el("span", { class: "badge xcount", dataset: { xcount: n.id } })),
         el("div", { class: "pvs" }, nodeProvenances(n.id).map(provChip)),
-        open ? el("div", { class: "id" }, n.id) : null,
-        open && md.description ? el("div", { class: "meta" }, md.description) : null,
+        // ひし形の中は名前と「分岐 N」だけ。id と説明は左列のメモに出す（頂点縁と交差するため下には置けない）
+        open && !gw ? el("div", { class: "id" }, n.id) : null,
+        open && !gw && md.description ? el("div", { class: "meta" }, md.description) : null,
         el("button", { class: "info", title: "詳細パネルで開く", "aria-label": "詳細を開く",
           onclick: function (ev) { ev.stopPropagation(); selectNode(n.id); } }, "ⓘ"));
       return box;
@@ -1434,23 +1578,27 @@ html[data-theme="light"] {
         else if (e.kind === "invokes") calls.push({ node: t, edge: e });
       });
       var io = stepIoCount(n.id);
-      if (reads.length) left.appendChild(el("div", { class: "side-head" }, "このステップの読み取り"));
+      if (md0.stepKind === "gateway") {
+        left.appendChild(el("div", { class: "side-head" }, "この分岐について"));
+        left.appendChild(el("div", { class: "gw-note" },
+          el("div", { class: "gn-id" }, n.id),
+          md0.description ? el("div", { class: "gn-desc" }, md0.description) : null));
+      }
       reads.forEach(function (x) {
-        var card = flowCard(x.node);
+        var card = flowCard(x.node, { mark: ["読", "reads"] });
         left.appendChild(card);
         placed.add(x.node.id);
-        self.edgeItems.push({ edge: x.edge, fromEl: box, toEl: card });
+        // データの向きは step → store（事実の向き）のまま、図では「格納先 → タスク」に描く
+        self.edgeItems.push({ edge: x.edge, fromEl: card, toEl: box });
       });
-      if (writes.length) right.appendChild(el("div", { class: "side-head" }, "このステップの書き込み"));
       writes.forEach(function (x) {
-        var card = flowCard(x.node);
+        var card = flowCard(x.node, { mark: ["書", "writes"] });
         right.appendChild(card);
         placed.add(x.node.id);
         self.edgeItems.push({ edge: x.edge, fromEl: box, toEl: card });
       });
-      if (calls.length) right.appendChild(el("div", { class: "side-head", style: "margin-top:4px" }, "このステップの呼び出し"));
       calls.forEach(function (x) {
-        var card = flowCard(x.node);
+        var card = flowCard(x.node, { mark: ["呼", "invokes"] });
         right.appendChild(card);
         placed.add(x.node.id);
         self.edgeItems.push({ edge: x.edge, fromEl: box, toEl: card });
@@ -1474,7 +1622,10 @@ html[data-theme="light"] {
             isUnlinked(y.node) ? el("span", { class: "badge cand" }, "未紐づけ") : null);
           wrap.appendChild(sub);
           placed.add(y.node.id);
-          self.edgeItems.push({ edge: y.edge, fromEl: card, toEl: sub });
+          // reads も図上は「格納先 → API」の向き。writes は API → 格納先のまま
+          self.edgeItems.push(y.edge.kind === "reads"
+            ? { edge: y.edge, fromEl: sub, toEl: card }
+            : { edge: y.edge, fromEl: card, toEl: sub });
         });
         right.appendChild(wrap);
       });
@@ -1511,6 +1662,10 @@ html[data-theme="light"] {
         right.appendChild(el("div", { class: "hint" },
           io === 0 ? "I/O が未記入です。詳細パネルのフォームで後付けできます。" : "I/O がフィルタで全部隠れています。"));
       }
+      // 品数が多い列は 2 列に折り返す。サイド列は行高を伸ばさないので、折り返さないと
+      // スクロール幅が足りず、画面外のカードへの縁が描けなくなる
+      if (md0.stepKind !== "gateway" && right.children.length >= 3) right.classList.add("multi");
+      if (left.children.length >= 4) left.classList.add("multi");
     },
     renderCandidates: function (placed) {
       var cands = state.vis.nodes.filter(function (n) {
@@ -1583,16 +1738,47 @@ html[data-theme="light"] {
     measureEdges: function () {
       if (!this.built || !this.lane) return;
       var box = this.lane.getBoundingClientRect();
-      var sideGap = this.lane.querySelector(".fc-side .sub-card") ? 12 : 30;
+      var sideGap = this.lane.querySelector(".fc-side > *") ? 12 : 30;
+      // サイド列は行高を変えない代わりに、行き過ぎた分だけその行ぶん＋αで_self内スクロールにする
+      Array.prototype.forEach.call(this.lane.querySelectorAll(".fc-side"), function (sc) {
+var row = sc.closest(".fc-row");
+        var mid = row ? row.querySelector(".fc-mid") : null;
+        if (mid) sc.style.maxHeight = Math.max(96, Math.round(mid.getBoundingClientRect().height) + 24) + "px";
+      });
+      // 経路がまたぐべきでないボックス（他の行のカード）の矩形
+      var others = [];
+      Array.prototype.forEach.call(this.lane.querySelectorAll(".step-box"), function (n) {
+        var r = n.getBoundingClientRect();
+        var gw = n.classList.contains("gw");
+        others.push({
+          el: n, gw: gw,
+          x0: r.left - box.left, x1: r.right - box.left, y0: r.top - box.top, y1: r.bottom - box.top,
+          mx: (r.left + r.right) / 2 - box.left, my: (r.top + r.bottom) / 2 - box.top,
+          hw: r.width / 2, hh: r.height / 2,
+        });
+      });
+      var svgProbe = this.svg;
       this.edgeItems.concat(this.linkItems).forEach(function (it) {
         if (!it.fromEl.isConnected || !it.toEl.isConnected) { it.d = null; it.bb = null; return; }
         var ra = it.fromEl.getBoundingClientRect(), rb = it.toEl.getBoundingClientRect();
+        // サイド列をスクロールしてカードが画面外なら、その縁は描かない（隠れた位置に矢印を出さない）
+        var outOfSide = function (r, n) {
+          var sc = n.closest ? n.closest(".fc-side") : null;
+          if (!sc || sc.scrollHeight <= sc.clientHeight + 2) return false;
+          var sr = sc.getBoundingClientRect();
+          return r.bottom < sr.top + 4 || r.top > sr.bottom - 4;
+        };
+        if (outOfSide(ra, it.fromEl) || outOfSide(rb, it.toEl)) { it.d = null; it.bb = null; return; }
         // ガターの位置: 展開中はサイドカード列との 20px 通路に寄せ、たたんだときは外側 30px を取る
+        var obs = others.filter(function (q) { return q.el !== it.fromEl && q.el !== it.toEl; });
         var g = it.link
-          ? stepLinkPath(box, ra, rb, it.loop, it.fan, it.srcGw, it.dstGw, it.vert, sideGap)
+          ? stepLinkPath(box, ra, rb, { probe: svgProbe, others: obs,
+              loop: it.loop, self: it.self, side: it.side, up: !!it.back, chan: it.chan, fan: it.fan,
+              srcGw: it.srcGw, dstGw: it.dstGw, vert: it.vert, vfan: it.vfan, gBase: sideGap,
+            })
           : bezier(box, ra, rb);
         it.d = g.d; it.tan = g.tan; it.face = g.face;
-        if (it.link) { it.lx = g.lx; it.ly = g.ly; it.keepX = g.keepX; }
+        if (it.link) { it.lx = g.lx; it.ly = g.ly; it.keepX = g.keepX; it.endAnchor = g.end; }
         it.bb = {
           y0: Math.min(ra.top, rb.top) - box.top - 8,
           y1: Math.max(ra.bottom, rb.bottom) - box.top + 8,
@@ -1652,7 +1838,8 @@ html[data-theme="light"] {
         path.setAttribute("marker-end", "url(#mk-" + k + ")");
         path.setAttribute("data-tan", Math.round(it.tan));
         path.setAttribute("data-face", it.face || "");
-        if (it.link) path.setAttribute("data-route", it.vert ? "vertex" : (it.loop ? "loop" : "gutter"));
+        // vertex=頂点直結 / loop=左頂点から出て戻る（自分ループ・後方縁） / gutter=側面通路
+        if (it.link) path.setAttribute("data-route", it.vert ? "vertex" : (it.back || it.loop ? "loop" : "gutter"));
         // data-edge の種別は縁の実際の kind（ループも next）。見た目の色は class 側で分ける
         path.setAttribute("data-edge", it.edge.source + "|" + it.edge.kind + "|" + it.edge.target);
         var title = document.createElementNS("http://www.w3.org/2000/svg", "title");
@@ -1670,11 +1857,15 @@ html[data-theme="light"] {
         var t = document.createElementNS("http://www.w3.org/2000/svg", "text");
         t.setAttribute("x", it.lx.toFixed(1));
         t.setAttribute("y", it.ly.toFixed(1));
-        t.setAttribute("class", (it.loop ? "loop" : "next") + (related ? " hl" : (ioSel ? " dimmed" : "")));
+        t.setAttribute("class", (it.loop ? "loop" : "next") +
+          (!it.loop && it.endAnchor ? " flip" : "") + (related ? " hl" : (ioSel ? " dimmed" : "")));
         t.setAttribute("data-label", it.edge.source + "|" + it.edge.target);
         t.textContent = (it.loop ? "↺ " : "") + it.label;
         lbl.appendChild(t);
-        labels.push({ t: t, x: it.lx, y: it.ly, loop: !!it.loop, end: !!it.loop, keepX: !!it.keepX });
+        labels.push({
+        t: t, x: it.lx, y: it.ly, loop: !!it.loop,
+        end: !!it.loop || !!it.endAnchor, keepX: !!it.keepX,
+      });
       });
       // ラベル配置: はみ出したものは縁の反対側へ回し、重なりは下へ押して避ける。
       // 同じ出所の分岐ラベルは同じ高さになりやすく、展開中はサイドカードとぶつかるため。
@@ -1692,7 +1883,7 @@ html[data-theme="light"] {
       }
       // 展開中のサイドカード（注釈チップ）の矩形。ガターのラベルが重なるので避ける
       var obs = [];
-      Array.prototype.forEach.call(lane.querySelectorAll(".fc-side .sub-card"), function (n) {
+      Array.prototype.forEach.call(lane.querySelectorAll(".fc-side > *"), function (n) {
         var r = n.getBoundingClientRect();
         obs.push({ x0: r.left - box.left, x1: r.right - box.left, y0: r.top - box.top, y1: r.bottom - box.top });
       });
@@ -1814,6 +2005,17 @@ html[data-theme="light"] {
     });
     return c;
   }
+  // gateway は I/O を持たないのが正常（分岐だけを持つ通過点）。「未記入」で定義不足と誤認させない
+  function isGateway(n) {
+    return !!n && n.kind === "step" && (n.metadata || {}).stepKind === "gateway";
+  }
+  function gatewayBranches(id) {
+    var c = 0;
+    (state.out.get(id) || []).forEach(function (e) {
+      if (e.kind === "next") c++;
+    });
+    return c;
+  }
   // ▼ と同じ記号を SVG で。軸も三角の頂点も真下を向く（角度を検査できる形にする）
   function downArrowSvg() {
     var NS = "http://www.w3.org/2000/svg";
@@ -1843,9 +2045,12 @@ html[data-theme="light"] {
       onclick: function () { selectNode(n.id); },
     },
       el("div", { class: "t" },
+        opts.mark ? el("span", { class: "io-mark", dataset: { io: opts.mark[1] },
+          title: opts.mark[1] === "reads" ? "このステップの読み取り"
+            : opts.mark[1] === "writes" ? "このステップの書き込み" : "このステップの呼び出し" }, opts.mark[0]) : null,
         el("span", { class: "kind-label", dataset: { kind: n.kind } }, el("span", { class: "kind-dot" })),
         el("span", { class: "nm" }, n.name),
-        un && n.kind === "step" && io === 0 ? el("span", { class: "badge empty-io" }, "未記入") : null,
+        un && n.kind === "step" && io === 0 && !isGateway(n) ? el("span", { class: "badge empty-io" }, "未記入") : null,
         un && (n.kind === "store" || n.kind === "boundary") ? el("span", { class: "badge cand" }, "未紐づけ") : null),
       el("div", { class: "id" }, n.id));
     var meta = [];
@@ -1872,59 +2077,148 @@ html[data-theme="light"] {
     }
     return null;
   }
-  // 分岐・ループ縁（ラベル付き next / metadata.loop）の経路。フローチャートの定石に寄せる。
-  //  - 出所は常に下端頂点（ひし形なら下頂点）に集約し、頂点の直下で扇状に分かれて
-  //    左右のガター（ボックス外側 30px からの廊下、同一出所は 18px 刻み）を走る。
-  //    右頂点からの多重放出をやめ、ひし形のシルエット上を横切らない。
-  //  - ゲートウェイ同士の分岐は頂点から頂点への短い垂直下降（自然な「次」に見える）。
-  //  - 行き先はボックスなら上辺 74%（ループは下辺 26%）、ひし形なら上頂点のみ。
-  //    辺の途中には刺さない。
-  //  - 終端は必ず面の外側法線上の直進区間（stub）なので、三角マーカーは必ず下（上）を向く。
-  function stepLinkPath(box, ra, rb, loop, fan, srcGw, dstGw, vert, gBase) {
-    var aw = ra.width;
-    var ax = ra.left - box.left, ab = ra.bottom - box.top;
-    var acx = ax + aw / 2;
-    var bw = rb.width;
+  // ステップ間の分岐・ループ縁（中央の ▼ を使わない next 全部）の経路。
+  //  - 下流へ向かう縁は下頂点から出て、頂点直下で扇に分かれてガター（通路）を走る。
+  //    上流へ戻る縁（metadata.loop など）は左頂点から出て、角をベジェで丸める。
+  //  - 自己ループ（source === target）は下頂点から出て左側で小さな輪を作り、左辺へ水平に戻る。
+  //  - ゲートウェイ同士の前方分岐だけが頂点から頂点への短い垂直下降。
+  //  - ガターの深さ・左右は collectLinks が決める。絡み合う縁は左右に分け、同じ側では
+  //    交差が起きないようにする。
+  //  - 行き先ボックスには進行方向の正面（下流は上辺、上流は下辺）から入るのが基本。
+  //    途中のボックスに邪魔されて正面へ回れないときは側面から入る。ひし形には頂点のみ。
+  //  - 終端は必ず面の外側法線上の直進区間（stub）なので、三角マーカーは面の向きどおりになる。
+  function stepLinkPath(box, ra, rb, o) {
+    var aw = ra.width, ah = ra.height;
+    var ax = ra.left - box.left, at = ra.top - box.top, ab = ra.bottom - box.top;
+    var acx = ax + aw / 2, acy = at + ah / 2;
+    var bw = rb.width, bh = rb.height;
     var bx = rb.left - box.left, bt = rb.top - box.top, bb = rb.bottom - box.top;
-    var bcx = bx + bw / 2;
-    var f = fan || 0;
-    // ゲートウェイ ⇔ ゲートウェイ: 下頂点から上頂点への短い垂直下降
-    if (vert && !loop) {
+    var bcx = bx + bw / 2, bcy = bt + bh / 2;
+    var f = o.fan || 0, ch = o.chan || 0;
+    var depth = (o.gBase || 30) + ch * 18 + f * 9;
+    // 展開中はサイドカードと中央のあいだの 20px 通路しか通れない。レーン数が多いときは
+    // 通路内で折り返し、同じ x に潰して見えなくしない（狭いので間隔は詰まる）
+    if ((o.gBase || 30) <= 14) depth = 4 + ((ch * 18 + f * 9) % 15);
+    var clampX = function (x) { return Math.max(10, Math.min(box.width - 10, x)); };
+    var left = o.side === "left", up = !!o.up;
+
+    // ゲートウェイ同士の前方分岐: 下頂点から上頂点への短い垂直下降。
+    // 同じ頂点に複数集まると 1 本に潰えて別条件が見えないので、辺に沿って左右へ刻む。
+    if (o.vert) {
+      var vf = o.vfan || 0;
+      var half = 16;
+      var sx = (vf % 2 ? -1 : 1) * Math.ceil(vf / 2) * half;   // 0, +16, -16, +32, ...
       var dv = Math.max(9, Math.min(30, (bt - ab) * 0.4));
+      var ax2 = acx + sx, bx2 = bcx + sx;
+      // ひし形の辺に沿ってずらす（頂点から水平に離れる分、上下頂点へ寄せる）
+      var ay = ab - Math.min(ah / 2, Math.abs(sx) * (ah / bw));
+      var by = bt + Math.min(bh / 2, Math.abs(sx) * (bh / bw));
+      if (vf === 0) { ay = ab; by = bt; }
       return {
-        d: "M" + acx + "," + ab + " C" + acx + "," + (ab + dv) + " " + bcx + "," + (bt - dv) + " " + bcx + "," + bt,
-        tan: 90, face: "down", keepX: true,
-        lx: Math.max(acx, bcx) + 8, ly: (ab + bt) / 2,
+        d: "M" + ax2 + "," + ay + " C" + ax2 + "," + (ay + dv) + " " + bx2 + "," + (by - dv) + " " + bx2 + "," + by,
+        tan: 90, face: "down", keepX: true, end: false,
+        lx: Math.max(ax2, bx2) + 8, ly: (ay + by) / 2 + (vf === 0 ? 0 : (vf % 2 ? 13 : -13)),
       };
     }
-    var down = bt >= ab;
-    var sg = down ? 1 : -1;
-    var laneGap = gBase || 30;
-    var gx = loop ? Math.min(ax, bx) - (laneGap + f * 18) : Math.max(ax + aw, bx + bw) + (laneGap + f * 18);
-    gx = Math.max(10, Math.min(box.width - 10, gx));
-    var x1 = acx, y1 = ab;
-    var fy = ab + 14 + f * 8;                          // 頂点直下の扇出口（同じ出所は刻む）
-    var ex = dstGw ? bcx : bx + bw * (loop ? 0.26 : 0.74);
-    var y2 = down ? bt : bb;
-    var stub = Math.max(10, Math.min(22, Math.abs(y2 - fy) * 0.25));
-    var ym = y2 - sg * stub;                           // 終点直前の直進区間の始まり
-    var d1 = Math.max(9, Math.min(20, Math.abs(fy - y1) * 0.6));
-    var d2 = Math.max(10, Math.min(48, Math.abs(ym - fy) * 0.45, Math.abs(ex - gx) * 0.7));
-    var yt = down ? Math.max(fy + 2, ym - d2) : Math.min(fy - 2, ym + d2);
-    var dd = Math.abs(ym - yt);
-    return {
-      d: "M" + x1 + "," + y1 +
-         " C" + x1 + "," + (y1 + d1) + " " + gx + "," + (fy - d1) + " " + gx + "," + fy +
-         " L" + gx + "," + yt +
+
+    // 自分自身に戻る縁: 左頂点から出て左側で半周し、左辺（上寄り）へ水平に戻る
+    if (o.self) {
+      var gxS = clampX(Math.min(ax, bx) - depth);
+      var eyS = Math.max(bt + 6, acy - 12 - f * 8);
+      var stubS = Math.max(12, Math.min(22, (ax - gxS) * 0.35));
+      var exS = bx;
+      if (o.dstGw) {   // ひし形の輪郭に戻るよう、入る高さで x を寄せる
+        exS = bx + Math.min(bw / 2 - 6, (acy - eyS) * (bw / 2) / Math.max(1, bh / 2));
+      }
+      var gyS = Math.min(acy - 20, eyS - 10);
+      var dS = "M" + ax + "," + acy +
+        " C" + (ax - 16) + "," + (acy - 2) + " " + (gxS + 4) + "," + (acy - 12) + " " + gxS + "," + gyS +
+        " C" + gxS + "," + (gyS - 12) + " " + (exS + stubS) + "," + (eyS - 12) + " " + (exS + stubS) + "," + eyS +
+        " L" + exS + "," + eyS;
+      return { d: dS, tan: 0, face: "right", keepX: true, end: true, lx: gxS - 8, ly: gyS - 8 };
+    }
+
+    var gx = left ? clampX(Math.min(ax, bx) - depth) : clampX(Math.max(ax + aw, bx + bw) + depth);
+    var d, yRun;
+    if (up) {
+      // 戻る縁は左頂点から出て、ガターとの角を丸めて上へ走る
+      var fyU = acy - 10 - f * 8;
+      var dcU = Math.max(12, Math.min(30, Math.abs(ax - gx) * 0.4));
+      d = "M" + ax + "," + acy +
+          " C" + (gx < ax ? ax - dcU : ax + dcU) + "," + acy + " " + gx + "," + (fyU + dcU) + " " + gx + "," + fyU;
+      yRun = fyU;
+    } else {
+      // 下流の縁は下頂点から扇を出してガターへ。同じ出所は縦に刻む
+      var fyD = ab + 14 + f * 8;
+      var d1D = Math.max(9, Math.min(20, (fyD - ab) * 0.6));
+      d = "M" + acx + "," + ab +
+          " C" + acx + "," + (ab + d1D) + " " + gx + "," + (fyD - d1D) + " " + gx + "," + fyD;
+      yRun = fyD;
+    }
+
+    // 進入面を決める。まずは進行方向の正面（下流は上辺、上流は下辺）から。
+    var sg = up ? -1 : 1;                          // ガターを走る向き
+    var faceY = up ? bb : bt;
+    var ex = o.dstGw ? bcx : bx + bw * (left || up ? 0.26 : 0.74) + (left ? -f * 14 : f * 14);
+    var stub = Math.max(10, Math.min(22, Math.abs(faceY - yRun) * (up ? 0.2 : 0.25)));
+    var ym = up ? faceY + stub : faceY - stub;   // 正面の外側、直進区間の端
+    var dd = Math.max(12, Math.min(34, Math.abs(ym - yRun) * 0.45, Math.abs(ex - gx) * 0.7));
+    var yt = up ? Math.min(yRun - 2, ym + dd) : Math.max(yRun + 2, ym - dd);
+    var lblY = up ? yRun + 16 : yRun - 9;        // ラベルは扇（角）の出口の直後
+    var front = {
+      d: d + " L" + gx + "," + yt +
          " C" + gx + "," + (yt + sg * dd) + " " + ex + "," + (ym - sg * dd) + " " + ex + "," + ym +
-         " L" + ex + "," + y2,
-      tan: sg > 0 ? 90 : -90,
-      face: down ? "down" : "up",
-      keepX: true,
-      // ラベルは扇の出口直後、ガターを走る縁に沿わせる
-      lx: gx + (loop ? -8 : 8),
-      ly: fy + (down ? 18 : -13),
+         " L" + ex + "," + faceY,
+      tan: up ? -90 : 90, face: up ? "up" : "down", keepX: true, end: true, lx: gx - 8, ly: lblY,
     };
+    // 他のボックス（ひし形は輪郭）の中を横切るなら側面から入り直す
+    if (!pathHits(o.probe, front.d, o.others)) return front;
+
+    // 正面へ回れないので側面から入る（他のボックスの背後に隠れないため）
+    var sg2 = up ? -1 : 1;
+    var xr = left ? bx : bx + bw;                    // 側面（左辺または右辺）の x
+    var yr = o.dstGw ? bcy : bt + bh * 0.5 + f * 14;
+    var stub2 = Math.max(10, Math.min(20, Math.abs(gx - xr) * 0.35));
+    var xe = left ? xr - stub2 : xr + stub2;          // 面の外側、直進区間の端
+    var kR = Math.max(10, Math.min(34, Math.abs(gx - xe) * 0.45));
+    var ya = up ? Math.min(yRun - 4, yr + kR) : Math.max(yRun + 4, yr - kR);
+    var kR2 = Math.max(8, Math.min(kR, Math.abs(yr - ya) * 0.9));
+    d += " L" + gx + "," + ya +
+         " C" + gx + "," + (ya + sg2 * kR2) + " " + (xe + (left ? -kR2 : kR2)) + "," + yr +
+         " " + xe + "," + yr + " L" + xr + "," + yr;
+    return { d: d, tan: left ? 0 : 180, face: left ? "right" : "left", keepX: true, end: true,
+      lx: gx - 8, ly: up ? yRun + 16 : yRun - 9 };
+  }
+
+  // 組んだ経路が他のボックスの中を横切るかを実測する（縁をボックスの背後に隠さないため）。
+  // ひし形は矩形ではなく輪郭（内接判定）で見る。両端は自分のボックスに触れるので調べない。
+  function pathHits(svg, d, others) {
+    if (!svg || !others || !others.length) return false;
+    var p = null;
+    try {
+      p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      p.setAttribute("d", d);
+      p.setAttribute("style", "visibility:hidden");
+      svg.appendChild(p);
+      var len = p.getTotalLength();
+      var n = Math.max(10, Math.floor(len / 4));
+      for (var i = 1; i < n; i++) {
+        var pt = p.getPointAtLength((len * i) / n);
+        for (var j = 0; j < others.length; j++) {
+          var b = others[j];
+          if (b.gw) {
+            if (Math.abs(pt.x - b.mx) / b.hw + Math.abs(pt.y - b.my) / b.hh <= 0.94) return true;
+          } else if (pt.x > b.x0 + 1 && pt.x < b.x1 - 1 && pt.y > b.y0 + 1 && pt.y < b.y1 - 1) {
+            return true;
+          }
+        }
+      }
+      return false;
+    } catch (e) {
+      return false;
+    } finally {
+      if (p && p.parentNode) p.parentNode.removeChild(p);
+    }
   }
 
   // 2 つのカード間のベジェ。出る辺・入る辺を決め、制御点をその辺の外側法線上に張る。
@@ -2217,9 +2511,23 @@ html[data-theme="light"] {
       function paintEdge(e, hot) {
         var a = self.pos.get(e.source), b = self.pos.get(e.target);
         if (!a || !b) return false;
+        var em = e.metadata || {};
+        if (a === b) {
+          // 自己ループ（分岐が自分自身に戻る）: ノードの左上に小さな輪
+          ctx.globalAlpha = focus ? 0.8 : 0.7;
+          ctx.strokeStyle = em.loop ? tv("--e-loop") : edgeColor(e.kind);
+          ctx.fillStyle = ctx.strokeStyle;
+          ctx.setLineDash([]);
+          var lr = (self.radius(a) + 5 / v.k) * 0.62;
+          ctx.beginPath();
+          ctx.arc(a.x - lr * 1.15, a.y - lr * 1.15, lr, 0.5, 5.6);
+          ctx.stroke();
+          self.heads++;
+          return true;
+        }
         if (Math.max(a.x, b.x) < wx0 || Math.min(a.x, b.x) > wx1 || Math.max(a.y, b.y) < wy0 || Math.min(a.y, b.y) > wy1) return false;
         ctx.globalAlpha = focus ? 0.8 : (e.provenance === "llm" || e.provenance === "human" ? 0.75 : 0.55);
-        ctx.strokeStyle = edgeColor(e.kind);
+        ctx.strokeStyle = em.loop ? tv("--e-loop") : edgeColor(e.kind);
         ctx.fillStyle = ctx.strokeStyle;
         if (e.provenance === "llm" || e.provenance === "human") ctx.setLineDash([6 / v.k, 4 / v.k]);
         else ctx.setLineDash([]);
@@ -2273,11 +2581,19 @@ html[data-theme="light"] {
         var r = this.radius(nd);
         var dimN = focus && !focus.has(nd.id);
         ctx.globalAlpha = dimN ? 0.12 : 1;
+        var n0 = byId.get(nd.id);
+        var gw = n0 && n0.metadata && n0.metadata.stepKind === "gateway";
         ctx.beginPath();
-        ctx.arc(nd.x, nd.y, r, 0, 6.283185);
+        if (gw) {
+          var dr = r * 1.5;   // flow のひし形と同じ形（分岐ゲート）
+          ctx.moveTo(nd.x, nd.y - dr); ctx.lineTo(nd.x + dr, nd.y);
+          ctx.lineTo(nd.x, nd.y + dr); ctx.lineTo(nd.x - dr, nd.y);
+          ctx.closePath();
+        } else {
+          ctx.arc(nd.x, nd.y, r, 0, 6.283185);
+        }
         ctx.fillStyle = kindColor(nd.kind);
         ctx.fill();
-        var n0 = byId.get(nd.id);
         if (n0 && n0.metadata && n0.metadata.candidate === true) {
           ctx.lineWidth = 1.4 / v.k;
           ctx.strokeStyle = tv("--warn");
@@ -2327,6 +2643,30 @@ html[data-theme="light"] {
         ctx.strokeText(label, sx, sy + rr + 3);
         ctx.fillStyle = m.id === state.selected ? tv("--cv-label-sel") : tv("--cv-label");
         ctx.fillText(label, sx, sy + rr + 3);
+      }
+      // --- 選択ノードに結ばれた縁の条件ラベル（分岐名・ループ）。flow の縁ラベルと揃える ---
+      if (state.selected) {
+        ctx.textBaseline = "middle";
+        ctx.lineWidth = 3;
+        var se = this.sim.edges;
+        for (i = 0; i < se.length; i++) {
+          var ee = se[i];
+          if (ee.source !== state.selected && ee.target !== state.selected) continue;
+          var em2 = ee.metadata || {};
+          var txt = em2.label ? String(em2.label) : (em2.loop ? "ループ" : "");
+          if (!txt) continue;
+          if (txt.length > 18) txt = txt.slice(0, 17) + "…";
+          var ea = this.pos.get(ee.source), eb = this.pos.get(ee.target);
+          if (!ea || !eb) continue;
+          var ex = (ea.x + eb.x) / 2 * v.k + v.x, ey = (ea.y + eb.y) / 2 * v.k + v.y;
+          if (ea === eb) { ex = ea.x * v.k + v.x; ey = ea.y * v.k + v.y - (this.radius(ea) * v.k + 16); }
+          if (ex < -40 || ex > w + 40 || ey < -20 || ey > h + 20) continue;
+          ctx.strokeStyle = tv("--cv-halo");
+          ctx.strokeText(txt, ex, ey);
+          ctx.fillStyle = em2.loop ? tv("--e-loop") : tv("--e-next");
+          ctx.fillText(txt, ex, ey);
+        }
+        ctx.textBaseline = "top";
       }
     },
     updateHud: function () {
@@ -2617,7 +2957,9 @@ html[data-theme="light"] {
         var tr = el("tr", { dataset: { node: n.id, kind: "step" }, onclick: function () { selectNode(n.id); } },
           el("td", {}, nodeLink(r.flow.id, r.flow.name)),
           el("td", { class: "mono" }, String(r.st.order || "-")),
-          el("td", {}, el("b", {}, n.name), ioCount === 0 ? el("span", { class: "badge empty-io" }, "未記入") : null,
+          el("td", {}, el("b", {}, n.name),
+            isGateway(n) ? el("span", { class: "badge b-io g", title: "ゲートウェイ（分岐のみ。I/O を持たないのが正常）" }, "分岐 " + gatewayBranches(n.id)) : null,
+            ioCount === 0 && !isGateway(n) ? el("span", { class: "badge empty-io" }, "未記入") : null,
             isUnlinked(n) && ioCount > 0 ? el("span", { class: "badge cand" }, "未紐づけ") : null,
             el("div", { class: "sr-id" }, n.id)),
           el("td", { class: "cell-names" }, groups.reads.length
@@ -2793,7 +3135,8 @@ html[data-theme="light"] {
       md.storeKind ? el("span", { class: "badge" }, "store: " + md.storeKind) : null,
       md.boundaryKind ? el("span", { class: "badge" }, "boundary: " + md.boundaryKind) : null,
       el("span", { class: "badge" }, "出所: " + provLabel(nodeProvenance(n))),
-      stepIoCount(n.id) === 0 && n.kind === "step" ? el("span", { class: "badge empty-io" }, "未記入") : null,
+      isGateway(n) ? el("span", { class: "badge b-io g", title: "ゲートウェイ（分岐のみ。I/O を持たないのが正常）" }, "分岐 " + gatewayBranches(n.id)) : null,
+      stepIoCount(n.id) === 0 && n.kind === "step" && !isGateway(n) ? el("span", { class: "badge empty-io" }, "未記入") : null,
       isUnlinked(n) && n.kind !== "step" ? el("span", { class: "badge cand" }, "未紐づけ") : null,
       el("span", { class: "badge" }, "次数 " + (state.degree.get(n.id) || 0))));
     if (n.parent) {
@@ -2801,7 +3144,14 @@ html[data-theme="light"] {
     }
 
     if (state.detailEdge) host.appendChild(detailEdgeBlock(state.detailEdge));
-    if (state.detailEvidence) host.appendChild(detailEvidenceBlock(state.detailEvidence));
+    // 抜粋は対象ノードのものだけを出す（別ノードのまま残る事故を防ぐ）
+    // 抜粋は自分（または選んだ縁の相手）のものだけ出す。別ノードを選んだのに残る事故を防ぐ
+    if (state.detailEvidence) {
+      var evOther = state.detailEdge ? (state.detailEdge.source === n.id ? state.detailEdge.target : state.detailEdge.source) : "";
+      var evId = state.detailEvidence.nodeId;
+      if (evId === n.id || evId === evOther) host.appendChild(detailEvidenceBlock(state.detailEvidence));
+      else state.detailEvidence = null;
+    }
 
     // --- metadata ---
     host.appendChild(el("div", { class: "sec-title" }, "metadata"));
@@ -3077,6 +3427,7 @@ html[data-theme="light"] {
       var steps = flowSteps(f);
       var counts = { reads: 0, writes: 0, invokes: 0, empty: 0 };
       steps.forEach(function (st) {
+        if (isGateway(st.node)) return; // gateway は I/O 対象外（分岐だけを持つ通過点）
         var io = 0;
         outsOf(st.id).forEach(function (e) {
           if (e.kind === "reads") { counts.reads++; io++; }
