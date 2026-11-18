@@ -1,0 +1,14 @@
+{
+  "name": "flow-io-viewer",
+  "version": "0.1.0",
+  "description": "業務フローのデータ I/O を静的 HTML で管理する仕組み",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
+  "license": "ISC",
+  "devDependencies": {
+    "playwright-core": "^1.65.1"
+  }
+}

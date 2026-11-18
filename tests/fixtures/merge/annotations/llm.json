@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "producer": "llm",
+  "nodes": [
+    { "id": "store:table/erp_invoices", "kind": "store", "name": "erp_invoices",
+      "metadata": { "storeKind": "table", "note": "ERP 側テーブル（リポジトリ外）" } },
+    { "id": "flow:not-allowed", "kind": "flow", "name": "注釈で作れない" }
+  ],
+  "edges": [
+    { "source": "step:ship/label", "target": "code:src/label.ts", "kind": "implemented-by",
+      "confidence": 0.9, "note": "label.ts が伝票出力の実装" },
+    { "source": "step:ship/pack", "target": "store:table/erp_invoices", "kind": "writes",
+      "confidence": 0.65, "note": "pack の終了処理が ERP 連携ジョブを叩く（ジョブ定義からの推定）" },
+    { "source": "step:ship/pick", "target": "store:table/nope", "kind": "reads",
+      "confidence": 0.9, "note": "存在しないノード（捨てられるべき）" },
+    { "source": "step:ship/pick", "target": "code:src/pick.py", "kind": "implemented-by",
+      "note": "confidence 無し（0.7 に寄せられて警告が出るべき）" },
+    { "source": "step:ship/pick", "target": "store:table/orders", "kind": "reads",
+      "confidence": 1, "note": "定義と重複（definition が残り note は notesFrom に寄る）" }
+  ],
+  "metadata": [
+    { "match": { "kind": "flow", "id": "flow:ship" }, "set": { "sla": "当日出荷" } },
+    { "match": { "kind": "store" }, "set": { "誰も当たらないはずはない": "multi で警告" } }
+  ]
+}

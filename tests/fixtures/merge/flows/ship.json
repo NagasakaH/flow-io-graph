@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "flows": [
+    {
+      "id": "ship",
+      "name": "出荷フロー",
+      "owner": "logistics",
+      "steps": [
+        { "id": "pick", "name": "ピッキング", "reads": ["table/orders", "kv/WMS_TOKENS"] },
+        { "id": "pack", "name": "梱包", "reads": ["table/orders"], "writes": ["table/shipments"] },
+        { "id": "label", "name": "伝票出力", "reads": ["table/shipments"], "writes": ["file/out/label.pdf"],
+          "invokes": ["http/label-api/print", "sfn/../bad-ref", "nonsense"] }
+      ]
+    }
+  ]
+}

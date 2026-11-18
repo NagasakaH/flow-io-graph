@@ -1,0 +1,32 @@
+{
+  // 人が運用知識を補った注釈。決済サービスはこのリポジトリに実装がない。
+  "schemaVersion": 1,
+  "producer": "human",
+  "nodes": [
+    {
+      "id": "store:table/payments",
+      "kind": "store",
+      "name": "payments",
+      "metadata": {
+        "storeKind": "table",
+        "owner": "payments-team",
+        "note": "決済サービス (payments-svc) の Postgres。このリポジトリには定義がない"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "source": "boundary:http/payment-service/charge",
+      "target": "store:table/payments",
+      "kind": "writes",
+      "confidence": 0.6,
+      "note": "payments-svc の README「POST /charge は payments テーブルに課金履歴を残す」より。コードでは未確認"
+    }
+  ],
+  "metadata": [
+    {
+      "match": { "kind": "flow", "id": "flow:order-intake" },
+      "set": { "sla": "受注から決済完了まで p95 5 分" }
+    }
+  ]
+}

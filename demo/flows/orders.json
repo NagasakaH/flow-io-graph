@@ -1,0 +1,41 @@
+{
+  // 注文まわりの業務フロー。steps の並べ順がそのままフローの順序になる。
+  "schemaVersion": 1,
+  "flows": [
+    {
+      "id": "order-intake",
+      "name": "注文受付フロー",
+      "owner": "orders-team",
+      "description": "受注から決済・通知・日次レポートまで",
+      "steps": [
+        {
+          "id": "receive",
+          "name": "注文受信",
+          "reads": ["table/order_drafts"],
+          "writes": ["table/orders"],
+          "invokes": ["http/payment-service/charge"],
+          "docs": "runbook: 注文受付 (Notion)"
+        },
+        {
+          "id": "charge",
+          "name": "決済確定",
+          "description": "決済済みレコード（境界の向こうで payments に書かれる）を読んでイベント化する",
+          "reads": ["table/payments"],
+          "writes": ["queue/order-events"]
+        },
+        {
+          "id": "notify",
+          "name": "購入者通知",
+          "reads": ["queue/order-events"],
+          "writes": ["table/notifications"]
+        },
+        {
+          "id": "daily-report",
+          "name": "日次レポート",
+          "reads": ["table/orders"],
+          "writes": ["file/reports/daily.csv", "s3/analytics-bucket/reports"]
+        }
+      ]
+    }
+  ]
+}

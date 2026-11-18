@@ -1,0 +1,35 @@
+{
+  // LLM がコードを読んで書いた注釈（ワークシート → 原文確認 → これを書く、の想定成果物）。
+  "schemaVersion": 1,
+  "producer": "llm",
+  "edges": [
+    {
+      "source": "step:order-intake/receive",
+      "target": "code:src/handlers/create_order.py",
+      "kind": "implemented-by",
+      "confidence": 0.95,
+      "note": "handle_create_order が INSERT INTO orders / order_drafts 参照 / PAYMENT_URL 呼び / order-events 送信を一括で行っている (create_order.py:13-31)"
+    },
+    {
+      "source": "step:order-intake/notify",
+      "target": "code:src/notify/notify.rb",
+      "kind": "implemented-by",
+      "confidence": 0.9,
+      "note": "consume が order-events を receive_message し、INSERT INTO notifications / UPDATE orders (notify.rb:7-18)"
+    },
+    {
+      "source": "step:order-intake/daily-report",
+      "target": "code:src/jobs/daily_report.js",
+      "kind": "implemented-by",
+      "confidence": 0.95,
+      "note": "run が SELECT FROM orders → reports/daily.csv → analytics-bucket 転送 (daily_report.js:8-21)"
+    },
+    {
+      "source": "step:order-intake/charge",
+      "target": "boundary:http/payment-service/charge",
+      "kind": "invokes",
+      "confidence": 0.55,
+      "note": "決済確定ステップは charge 応答の消費側と思われるが、コード上的な対応付けを確認できていない（推定）"
+    }
+  ]
+}

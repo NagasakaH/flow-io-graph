@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-01-01T00:00:00.000Z",
+  "root": "/fixture",
+  "files": [
+    {
+      "path": "src/pick.py",
+      "lang": "python",
+      "signals": [
+        { "signal": "sql-read", "ref": "table/orders", "line": 10, "snippet": "SELECT * FROM orders" },
+        { "signal": "kv", "ref": "kv/WMS_TOKENS", "line": 12, "snippet": "redis.get('WMS_TOKENS')" },
+        { "signal": "http-call", "ref": null, "line": 30, "snippet": "requests.get(BASE + path)" }
+      ]
+    },
+    {
+      "path": "src/label.ts",
+      "lang": "typescript",
+      "signals": [
+        { "signal": "file-write", "ref": "file/out/label.pdf", "line": 4, "snippet": "fs.writeFileSync('out/label.pdf')" },
+        { "signal": "sql-write", "ref": "table/shipments", "line": 9, "snippet": "INSERT INTO shipments" },
+        { "signal": "http-call", "ref": "http/label-api/print", "line": 12, "snippet": "fetch('https://label-api.internal/print')" }
+      ]
+    }
+  ],
+  "stores": [
+    { "id": "store:table/orders", "name": "orders", "storeKind": "table",
+      "evidence": [{ "path": "src/pick.py", "line": 10, "snippet": "SELECT * FROM orders", "signal": "sql-read" }] },
+    { "id": "store:table/ghost", "name": "ghost", "storeKind": "table",
+      "evidence": [{ "path": "src/pick.py", "line": 99, "snippet": "DELETE FROM ghost", "signal": "sql-write" }] },
+    { "id": "store:kv/wms-tokens", "name": "WMS_TOKENS", "storeKind": "kv", "evidence": [] },
+    { "id": "store:file/out/label.pdf", "name": "out/label.pdf", "storeKind": "file", "evidence": [] }
+  ],
+  "boundaries": [
+    { "id": "boundary:http/label-api/print", "name": "label-api/print", "boundaryKind": "http", "evidence": [] }
+  ]
+}

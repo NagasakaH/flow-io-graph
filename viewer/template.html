@@ -1,0 +1,2564 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+/* ============================================================
+   業務フロー データ I/O ビューア — ダークテーマ
+   外部フォント・CDN なし。システムフォントのみ。
+   ============================================================ */
+:root {
+  --bg: #0d1117;
+  --bg2: #131a23;
+  --bg3: #1a222d;
+  --bg4: #222c39;
+  --line: #26303f;
+  --line-soft: #1e2732;
+  --fg: #e6edf3;
+  --muted: #8b98a9;
+  --dim: #616e7f;
+  --accent: #58a6ff;
+  --warn: #d29922;
+  --danger: #f85149;
+  --ok: #3fb950;
+  /* ノード種別 */
+  --k-flow: #3fb950;
+  --k-step: #58a6ff;
+  --k-store: #f0883e;
+  --k-boundary: #bc8cff;
+  --k-code: #8b949e;
+  /* 縁の種別 */
+  --e-reads: #2dd4bf;
+  --e-writes: #f0883e;
+  --e-invokes: #bc8cff;
+  --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+[data-kind="flow"] { --kc: var(--k-flow); }
+[data-kind="step"] { --kc: var(--k-step); }
+[data-kind="store"] { --kc: var(--k-store); }
+[data-kind="boundary"] { --kc: var(--k-boundary); }
+[data-kind="code"] { --kc: var(--k-code); }
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px/1.55 -apple-system, BlinkMacSystemFont, "Hiragino Kaku Gothic ProN",
+    "Hiragino Sans", "Noto Sans JP", "Yu Gothic UI", "Meiryo", sans-serif;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+a { color: var(--accent); }
+code, .mono { font-family: var(--mono); font-size: 11.5px; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #2b3644; border-radius: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+
+/* ---------- ヘッダ ---------- */
+header.top {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, #161d26, #10161e);
+  padding: 8px 14px 7px;
+}
+.top-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.brand { display: flex; align-items: baseline; gap: 8px; margin-right: 6px; }
+.brand h1 { font-size: 15px; margin: 0; font-weight: 650; letter-spacing: .01em; }
+.brand .sub { font-size: 11px; color: var(--dim); }
+select, input[type="text"], input[type="number"] {
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 8px;
+  outline: none;
+}
+select:focus, input:focus { border-color: var(--accent); }
+.btn {
+  background: var(--bg3);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 10px;
+  color: var(--fg);
+  white-space: nowrap;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
+.btn.primary:hover { background: #388bfd; }
+.btn.ghost { background: transparent; color: var(--muted); }
+.btn.danger:hover { border-color: var(--danger); color: var(--danger); }
+.btn.small { padding: 2px 7px; font-size: 11.5px; }
+
+.search-wrap { position: relative; flex: 1 1 260px; max-width: 460px; min-width: 190px; }
+#search-input { width: 100%; padding-left: 26px; }
+.search-wrap::before {
+  content: "🔍"; position: absolute; left: 7px; top: 50%; transform: translateY(-50%);
+  font-size: 11px; opacity: .55; pointer-events: none;
+}
+#search-results {
+  position: absolute; z-index: 60; top: calc(100% + 4px); left: 0; right: 0;
+  max-height: 340px; overflow: auto;
+  background: var(--bg2); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .55);
+  display: none;
+}
+#search-results.open { display: block; }
+.sr-item { padding: 6px 9px; border-bottom: 1px solid var(--line-soft); cursor: pointer; }
+.sr-item:last-child { border-bottom: 0; }
+.sr-item:hover, .sr-item.active { background: #1c2734; }
+.sr-name { display: flex; align-items: center; gap: 6px; }
+.sr-id { color: var(--dim); font-family: var(--mono); font-size: 10.5px; word-break: break-all; }
+.sr-note { color: var(--dim); font-size: 11px; }
+.sr-head { padding: 5px 9px; color: var(--dim); font-size: 11px; background: #101720; }
+
+/* ---------- フィルタ chips ---------- */
+.filter-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 7px; }
+.chip-group { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.chip-group > .gl { font-size: 11px; color: var(--dim); margin-right: 2px; }
+.chip {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 1px 9px;
+  font-size: 11.5px;
+  line-height: 1.7;
+}
+.chip.on {
+  color: var(--fg);
+  border-color: var(--kc, var(--accent));
+  background: rgba(88, 166, 255, .16);
+  background: color-mix(in srgb, var(--kc, var(--accent)) 24%, transparent);
+}
+.chip:hover { border-color: var(--kc, var(--accent)); }
+.toggle { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--muted); }
+.toggle.on { color: var(--warn); }
+
+/* ---------- タブ ---------- */
+nav.tabs { display: flex; gap: 2px; padding: 0 14px; border-bottom: 1px solid var(--line); background: #0f151d; flex: 0 0 auto; }
+.tab-btn {
+  background: transparent; border: 0; border-bottom: 2px solid transparent;
+  color: var(--muted); padding: 7px 12px 6px; font-size: 12.5px;
+}
+.tab-btn:hover { color: var(--fg); }
+.tab-btn[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--accent); font-weight: 600; }
+.tab-btn .cnt { color: var(--dim); font-size: 11px; margin-left: 4px; }
+
+/* ---------- 本体 ---------- */
+main.body { flex: 1 1 auto; display: grid; grid-template-columns: minmax(0, 1fr) 400px; min-height: 0; }
+main.body > section.views { position: relative; min-width: 0; overflow: hidden; }
+.view { position: absolute; inset: 0; overflow: auto; padding: 12px 14px 20px; display: none; }
+.view.active { display: block; }
+.view.no-pad { padding: 0; }
+aside.detail {
+  border-left: 1px solid var(--line);
+  background: var(--bg2);
+  overflow: auto;
+  min-width: 0;
+  padding: 12px 13px 24px;
+}
+@media (max-width: 1000px) {
+  main.body { grid-template-columns: minmax(0, 1fr) 320px; }
+}
+
+/* ---------- ステータスバー ---------- */
+footer.status {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--line);
+  background: #0f151d;
+  color: var(--muted);
+  font-size: 11.5px;
+  padding: 4px 14px;
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+footer.status .dot { color: var(--dim); }
+
+/* ---------- 共通の小さな部品 ---------- */
+.badge {
+  display: inline-block; border-radius: 4px; padding: 0 5px; font-size: 10.5px;
+  line-height: 1.65; border: 1px solid var(--line); color: var(--muted); background: #0f151d;
+  white-space: nowrap;
+}
+.badge.cand { color: var(--warn); border-color: #6a5320; background: #2a2110; }
+.badge.empty-io { color: #e8b34b; border-color: #7a5c1a; background: #2b2211; }
+.badge.nullref { color: #ff9a8c; border-color: #7d3b34; background: #2d1a17; }
+.pv { display: inline-block; border-radius: 4px; padding: 0 5px; font-size: 10.5px; line-height: 1.65; border: 1px solid; }
+.pv-definition { color: #7ee787; border-color: #2ea04366; background: #12261a; }
+.pv-static { color: #9aa7b4; border-color: #4b5563aa; background: #1b2129; }
+.pv-llm { color: #d2a8ff; border-color: #8957e566; background: #241a33; }
+.pv-human { color: #79c0ff; border-color: #1f6feb66; background: #12233c; }
+.kind-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--kc, var(--dim)); display: inline-block; flex: 0 0 auto; }
+.kind-label { color: var(--kc, var(--muted)); font-size: 10.5px; }
+.muted { color: var(--muted); }
+.dim { color: var(--dim); }
+.hint { color: var(--dim); font-size: 11px; }
+.sec-title { font-size: 11.5px; color: var(--dim); text-transform: none; letter-spacing: .04em; margin: 14px 0 5px; font-weight: 650; }
+.card-panel { border: 1px solid var(--line); background: var(--bg2); border-radius: 8px; padding: 10px 11px; }
+.legend { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; font-size: 11px; color: var(--muted); margin-bottom: 10px; }
+.legend i { display: inline-block; width: 16px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 5px; }
+.legend i.dash { border-top-style: dashed; }
+.linkish { color: var(--accent); cursor: pointer; }
+.linkish:hover { text-decoration: underline; }
+.empty-note { color: var(--dim); padding: 18px 4px; }
+
+table.grid { width: 100%; border-collapse: collapse; font-size: 12px; }
+table.grid th, table.grid td { border-bottom: 1px solid var(--line-soft); padding: 5px 7px; text-align: left; vertical-align: top; }
+table.grid th { color: var(--dim); font-weight: 600; font-size: 11.5px; background: #101720; position: sticky; top: 0; z-index: 3; }
+table.grid th.sortable { cursor: pointer; user-select: none; }
+table.grid th.sortable:hover { color: var(--fg); }
+table.grid th .arrow { color: var(--accent); }
+table.grid tbody tr:hover { background: #17202b; }
+table.grid tbody tr.sel { background: #17293f; }
+/* td 自体を flex にすると table の列レイアウトが壊れるので、子は block で積む */
+.cell-names .n { display: block; cursor: pointer; line-height: 1.6; }
+.cell-names .n:hover { color: var(--accent); }
+.io-tags { display: flex; gap: 4px; flex-wrap: wrap; }
+
+/* ---------- フロー図 ---------- */
+.flow-scroll { height: 100%; overflow: auto; }
+.flow-cols {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(200px, 250px) minmax(300px, 1fr) minmax(220px, 300px);
+  gap: 46px;
+  padding: 4px 6px 18px;
+  align-items: start;
+}
+#flow-edges { position: absolute; inset: 0; pointer-events: none; z-index: 0; overflow: visible; }
+#flow-edges path.edge { fill: none; stroke-width: 1.6; opacity: .8; }
+#flow-edges path.edge.hl { opacity: 1; stroke-width: 2.4; }
+#flow-edges path.reads { stroke: var(--e-reads); }
+#flow-edges path.writes { stroke: var(--e-writes); }
+#flow-edges path.invokes { stroke: var(--e-invokes); }
+#flow-edges path.dash { stroke-dasharray: 5 4; }
+.col { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.col-head {
+  height: 30px; display: flex; align-items: center; gap: 6px;
+  font-size: 11.5px; color: var(--muted); border-bottom: 1px solid var(--line);
+  margin-bottom: 2px; font-weight: 650;
+}
+.col-head .n { color: var(--dim); font-weight: 400; }
+.fnode {
+  position: relative; z-index: 1;
+  border: 1px solid var(--line); border-left: 3px solid var(--kc, var(--line));
+  background: var(--bg3); border-radius: 7px; padding: 7px 9px; cursor: pointer;
+  transition: box-shadow .12s;
+}
+.fnode:hover { border-color: var(--accent); }
+.fnode.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
+.fnode.dashed { border-style: dashed; border-left-style: solid; background: #191f27; }
+.fnode .t { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 12.5px; min-width: 0; }
+.fnode .t .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fnode .id { color: var(--dim); font-family: var(--mono); font-size: 10px; word-break: break-all; margin-top: 2px; }
+.fnode .meta { color: var(--muted); font-size: 11px; margin-top: 3px; display: flex; gap: 6px; flex-wrap: wrap; }
+.fnode .pvs { margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap; }
+.step-wrap { position: relative; z-index: 1; display: flex; flex-direction: column; }
+.step-sep { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 11px; padding: 2px 0 2px 12px; }
+.step-sep .arrow { color: var(--accent); font-size: 13px; }
+.sub-wrap { margin: 4px 0 0 14px; display: flex; flex-direction: column; gap: 5px; position: relative; z-index: 1; }
+.sub-card {
+  border: 1px dashed var(--line); background: #141b23; border-radius: 6px; padding: 4px 7px;
+  font-size: 11.5px; cursor: pointer; display: flex; align-items: center; gap: 6px;
+}
+.sub-card:hover { border-color: var(--accent); }
+.sub-card.selected { outline: 2px solid var(--accent); }
+.sub-card .lbl { color: var(--dim); font-size: 10px; }
+.cand-band { margin: 16px 6px 0; border-top: 1px dashed var(--line); padding-top: 12px; position: relative; z-index: 1; }
+.cand-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; margin-top: 6px; }
+
+/* ---------- グラフ（canvas） ---------- */
+.canvas-host { position: absolute; inset: 0; }
+#graph-canvas { display: block; width: 100%; height: 100%; background: radial-gradient(1200px 700px at 45% 20%, #131c26, #0b1017 70%); cursor: grab; }
+#graph-canvas.dragging { cursor: grabbing; }
+.canvas-hud {
+  position: absolute; left: 10px; top: 10px; z-index: 5; display: flex; gap: 6px; flex-wrap: wrap;
+  align-items: center; font-size: 11px; color: var(--muted);
+}
+.canvas-hud .box { background: #101822cc; border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; backdrop-filter: blur(3px); }
+.canvas-hud .box.on { color: var(--warn); border-color: #6a5320; }
+
+/* ---------- コード一覧 ---------- */
+.code-item { border: 1px solid var(--line); border-radius: 8px; background: var(--bg2); margin-bottom: 8px; overflow: hidden; }
+.code-head { display: flex; align-items: center; gap: 9px; padding: 7px 10px; cursor: pointer; }
+.code-head:hover { background: #17202b; }
+.code-head .path { font-family: var(--mono); font-size: 12px; }
+.code-body { border-top: 1px solid var(--line-soft); background: #0f151d; }
+table.signals { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+table.signals th, table.signals td { padding: 4px 8px; border-bottom: 1px solid var(--line-soft); text-align: left; }
+table.signals th { color: var(--dim); font-weight: 600; background: #101720; }
+table.signals td.line { color: var(--dim); font-family: var(--mono); width: 54px; }
+table.signals td.sig { font-family: var(--mono); color: var(--muted); width: 110px; }
+table.signals td.snip { font-family: var(--mono); white-space: pre-wrap; word-break: break-word; cursor: pointer; }
+table.signals td.snip:hover { color: var(--accent); }
+table.signals tr.hl td { background: #1b2a3d; }
+
+/* ---------- 詳細パネル ---------- */
+#detail-panel .dt-head { display: flex; align-items: flex-start; gap: 8px; }
+#detail-panel .dt-name { font-size: 15px; font-weight: 650; line-height: 1.35; }
+#detail-panel .dt-id { font-family: var(--mono); font-size: 10.5px; color: var(--dim); word-break: break-all; margin-top: 2px; }
+table.kv { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+table.kv td { border-bottom: 1px solid var(--line-soft); padding: 3px 6px; vertical-align: top; }
+table.kv td.k { color: var(--dim); width: 34%; word-break: break-all; }
+table.kv td.v { word-break: break-word; }
+.edge-group { margin-bottom: 8px; }
+.edge-group .eg-title { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.edge-row { border: 1px solid var(--line-soft); border-radius: 6px; padding: 4px 7px; margin-bottom: 4px; background: #131a22; }
+.edge-row .er-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.edge-row .er-note { color: var(--muted); font-size: 11px; margin-top: 2px; }
+.edge-row .er-conf { color: var(--dim); font-size: 10.5px; font-family: var(--mono); }
+.ev-row { font-size: 11px; padding: 3px 0; border-bottom: 1px solid var(--line-soft); }
+.ev-row .loc { font-family: var(--mono); color: var(--accent); cursor: pointer; }
+.ev-row .snip { font-family: var(--mono); color: var(--muted); white-space: pre-wrap; word-break: break-word; display: block; margin-top: 1px; }
+form.ann { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: #121922; margin-bottom: 8px; }
+form.ann label { font-size: 11px; color: var(--dim); display: block; margin-bottom: 2px; }
+form.ann .row { display: flex; gap: 6px; flex-wrap: wrap; }
+form.ann .row > * { flex: 1 1 auto; min-width: 0; }
+form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weight: 600; }
+.warn-out { color: var(--warn); font-size: 11px; }
+.ann-pick { max-height: 130px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; display: none; }
+.ann-pick.open { display: block; }
+.ann-pick div { padding: 4px 7px; cursor: pointer; font-size: 11.5px; border-bottom: 1px solid var(--line-soft); }
+.ann-pick div:hover { background: #1c2734; }
+
+#toast {
+  position: fixed; left: 50%; bottom: 34px; transform: translateX(-50%) translateY(20px);
+  background: #1c2734; border: 1px solid var(--accent); color: var(--fg);
+  padding: 7px 14px; border-radius: 8px; font-size: 12px; opacity: 0; pointer-events: none;
+  transition: opacity .18s, transform .18s; z-index: 200; max-width: 70vw;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#fatal { padding: 26px; color: var(--danger); }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="top-row">
+    <div class="brand">
+      <h1 id="app-title">__TITLE__</h1>
+      <span class="sub">データ I/O 可視化</span>
+    </div>
+    <select id="flow-select" title="表示するフロー" hidden></select>
+    <div class="search-wrap">
+      <input id="search-input" type="text" placeholder="ノード検索（名前 / ID / コード抜粋）" autocomplete="off" spellcheck="false">
+      <div id="search-results" role="listbox"></div>
+    </div>
+    <button class="btn" id="btn-export" title="localStorage の人注釈を annotations/human.json として書き出す">注釈 JSON</button>
+    <button class="btn" id="btn-clear-ann" title="ブラウザ内の注釈を消す（リポジトリの human.json には影響しません）">ローカル注釈をクリア</button>
+    <button class="btn primary" id="btn-share" title="現在の表示を URL でコピー">共有</button>
+  </div>
+  <div class="filter-row">
+    <div class="chip-group" id="kind-chips"><span class="gl">種別</span></div>
+    <div class="chip-group" id="prov-chips"><span class="gl">出所</span></div>
+    <button class="chip toggle" id="chip-unlinked" aria-pressed="false" title="metadata.candidate、または I/O が空のステップ / 格納先へ届いていない境界">未紐づけのみ</button>
+    <button class="btn ghost small" id="btn-reset-filter">フィルタ解除</button>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs" role="tablist">
+  <button class="tab-btn" role="tab" data-view="flow" aria-selected="true">フロー図</button>
+  <button class="tab-btn" role="tab" data-view="graph" aria-selected="false">グラフ</button>
+  <button class="tab-btn" role="tab" data-view="stores" aria-selected="false">データ格納先</button>
+  <button class="tab-btn" role="tab" data-view="io" aria-selected="false">I/O 一覧</button>
+  <button class="tab-btn" role="tab" data-view="code" aria-selected="false">コード</button>
+</nav>
+
+<main class="body">
+  <section class="views" id="views">
+    <div class="view active" id="view-flow" role="tabpanel"></div>
+    <div class="view" id="view-graph" role="tabpanel"></div>
+    <div class="view" id="view-stores" role="tabpanel"></div>
+    <div class="view" id="view-io" role="tabpanel"></div>
+    <div class="view" id="view-code" role="tabpanel"></div>
+  </section>
+  <aside class="detail" id="detail-panel"></aside>
+</main>
+
+<footer class="status" id="status-bar"></footer>
+<div id="toast" role="status"></div>
+
+<script id="graph-data" type="application/json">"__GRAPH_DATA__"</script>
+<script>
+/* ============================================================
+   ビューア本体。単一ファイル・オフライン動作を最優先にするため
+   外部依存ゼロの素の JS（クラシックスクリプト）で書く。
+   file:// でも動くように localStorage は失敗時の保険付き。
+   ============================================================ */
+(function () {
+  "use strict";
+
+  // ---------- 定数（docs/schema.md とあわせる） ----------
+  var KINDS = ["flow", "step", "store", "boundary", "code"];
+  var KIND_LABEL = { flow: "フロー", step: "ステップ", store: "保存先", boundary: "境界", code: "コード" };
+  var PROV_KINDS = ["definition", "static", "llm", "human"];
+  var PROV_LABEL = { definition: "定義", static: "静的", llm: "LLM", human: "人間" };
+  var PROV_RANK = { definition: 0, static: 1, llm: 2, human: 3 };
+  var EDGE_KINDS = ["contains", "next", "reads", "writes", "invokes", "implemented-by", "touches"];
+  var EDGE_LABEL = {
+    contains: "含む", next: "次へ", reads: "読み取り", writes: "書き込み",
+    invokes: "呼び出し", "implemented-by": "実装コード", touches: "コードからアクセス",
+  };
+  var STORE_KINDS = ["table", "file", "s3", "queue", "topic", "kv", "other"];
+  var BOUNDARY_KINDS = ["http", "lambda", "sfn", "grpc", "cli", "other"];
+  var ANN_KEY = "flow-annotations";
+  // 大量データで初期表示が固まらないための打ち切り（超分は「さらに表示」で出す）
+  var TABLE_CAP = 400;
+  var FLOW_COL_CAP = 250;
+  var CAND_CAP = 200;
+  var SEARCH_CAP = 50;
+
+  // ---------- DOM ヘルパ ----------
+  var SVG_NS = "http://www.w3.org/2000/svg";
+  var SVG_TAGS = { svg: 1, g: 1, path: 1, defs: 1, marker: 1, circle: 1, line: 1, rect: 1, text: 1, tspan: 1, polyline: 1, polygon: 1 };
+  function el(tag, attrs) {
+    // SVG の要素は名前空間が違わないと描画されない（<svg> が HTML 扱いになると子も全部描けない）
+    var isSvg = !!SVG_TAGS[tag];
+    var node = isSvg ? document.createElementNS(SVG_NS, tag) : document.createElement(tag);
+    if (attrs) {
+      Object.keys(attrs).forEach(function (k) {
+        var v = attrs[k];
+        if (v === null || v === undefined || v === false) return;
+        if (k === "class") { if (isSvg) node.setAttribute("class", v); else node.className = v; }
+        else if (k === "text") node.textContent = String(v);
+        else if (k === "dataset") Object.keys(v).forEach(function (d) { node.dataset[d] = v[d]; });
+        else if (k.slice(0, 2) === "on" && typeof v === "function") node.addEventListener(k.slice(2), v);
+        else node.setAttribute(k, v === true ? "" : String(v));
+      });
+    }
+    for (var i = 2; i < arguments.length; i++) {
+      var kids = Array.isArray(arguments[i]) ? arguments[i] : [arguments[i]];
+      kids.forEach(function (c) {
+        if (c === null || c === undefined || c === false) return;
+        node.appendChild(typeof c === "object" ? c : document.createTextNode(String(c)));
+      });
+    }
+    return node;
+  }
+  function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); return node; }
+  function $(sel) { return document.querySelector(sel); }
+  function esc(s) { return String(s); } // textContent 前提。HTML に埋め込まない
+
+  // ---------- ローカル注釈（localStorage） ----------
+  var storage = {
+    available: true,
+    get: function () {
+      try { return window.localStorage.getItem(ANN_KEY); }
+      catch (e) { storage.available = false; return null; }
+    },
+    set: function (s) {
+      try { window.localStorage.setItem(ANN_KEY, s); return true; }
+      catch (e) { storage.available = false; return false; }
+    },
+    remove: function () {
+      try { window.localStorage.removeItem(ANN_KEY); return true; }
+      catch (e) { storage.available = false; return false; }
+    },
+  };
+
+  function emptyAnn() {
+    return { schemaVersion: 1, producer: "human", nodes: [], edges: [], metadata: [] };
+  }
+  function loadAnn() {
+    var raw = storage.get();
+    if (!raw) return emptyAnn();
+    var doc;
+    try { doc = JSON.parse(raw); } catch (e) { return emptyAnn(); }
+    if (!doc || typeof doc !== "object") return emptyAnn();
+    var out = emptyAnn();
+    if (Array.isArray(doc.nodes)) out.nodes = doc.nodes.filter(function (n) { return n && n.id; });
+    if (Array.isArray(doc.edges)) out.edges = doc.edges.filter(function (e) { return e && e.source && e.target && e.kind; });
+    if (Array.isArray(doc.metadata)) out.metadata = doc.metadata.filter(function (m) { return m && m.match && m.set; });
+    return out;
+  }
+  function persistAnn() {
+    if (!storage.set(JSON.stringify(state.ann, null, 2))) {
+      toast("localStorage に保存できませんでした（ブラウザ設定で無効化されています）");
+    }
+  }
+
+  // ---------- グラフ読み込み ----------
+  var state = {
+    graph: { schemaVersion: 1, nodes: [], edges: [], warnings: [] },
+    ann: emptyAnn(),
+    byId: new Map(),
+    out: new Map(),
+    in: new Map(),
+    degree: new Map(),
+    view: "flow",
+    flowId: null,
+    selected: null,
+    detailEdge: null,
+    focusId: null, // グラフタブの ⇧ フォーカス
+    filters: { kinds: new Set(KINDS), provs: new Set(PROV_KINDS), unlinked: false },
+    vis: { nodes: [], edges: [], nodeSet: new Set() },
+    tableLimits: {},
+  };
+
+  function edgeKey(e) { return e.source + "\u0000" + e.kind + "\u0000" + e.target; }
+
+  function kindOfId(id) {
+    if (typeof id !== "string") return null;
+    if (id.indexOf("flow:") === 0) return "flow";
+    if (id.indexOf("step:") === 0) return "step";
+    if (id.indexOf("store:") === 0) return "store";
+    if (id.indexOf("boundary:") === 0) return "boundary";
+    if (id.indexOf("code:") === 0) return "code";
+    return null;
+  }
+  // lib/util.mjs の normalizeIdSegment とおなじ寄せ方（注釈で新規 ID を作るときに通す）
+  function normSeg(s) {
+    return String(s).trim().toLowerCase().replace(/[\s_]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  }
+  function nodeProvenance(n) { return (n.metadata && n.metadata.provenance) || "definition"; }
+  function provLabel(p) { return PROV_LABEL[p] || p || "?"; }
+
+  function reindex() {
+    state.byId = new Map();
+    state.out = new Map();
+    state.in = new Map();
+    state.degree = new Map();
+    state.graph.nodes.forEach(function (n) {
+      if (!n.id) return;
+      if (!state.byId.has(n.id)) state.byId.set(n.id, n);
+      state.out.set(n.id, []);
+      state.in.set(n.id, []);
+    });
+    var kept = [];
+    state.graph.edges.forEach(function (e) {
+      if (!e || !state.byId.has(e.source) || !state.byId.has(e.target)) return;
+      kept.push(e);
+      state.out.get(e.source).push(e);
+      var tin = state.in.get(e.target);
+      if (tin) tin.push(e);
+    });
+    state.graph.edges = kept;
+    state.byId.forEach(function (n, id) {
+      var d = new Set();
+      (state.out.get(id) || []).forEach(function (e) { d.add(e.target); });
+      (state.in.get(id) || []).forEach(function (e) { d.add(e.source); });
+      state.degree.set(id, d.size);
+    });
+    searchCache = null; // 注釈でノードが変わったので検索候補を作り直す
+  }
+
+  // 「未紐づけ」の定義: 候補フラグ、I/O が 1 つもないステップ、格納先へ届かない境界
+  function isUnlinked(n) {
+    if (n.metadata && n.metadata.candidate === true) return true;
+    var outs = state.out.get(n.id) || [];
+    if (n.kind === "step") {
+      return !outs.some(function (e) { return e.kind === "reads" || e.kind === "writes" || e.kind === "invokes"; });
+    }
+    if (n.kind === "boundary") {
+      return !outs.some(function (e) {
+        return (e.kind === "reads" || e.kind === "writes") && (state.byId.get(e.target) || {}).kind === "store";
+      });
+    }
+    return false;
+  }
+
+  function nodePasses(n) {
+    if (!state.filters.kinds.has(n.kind)) return false;
+    if (!state.filters.provs.has(nodeProvenance(n))) return false;
+    if (state.filters.unlinked && !isUnlinked(n)) return false;
+    return true;
+  }
+  function edgePasses(e) {
+    if (!state.filters.provs.has(e.provenance)) return false;
+    var s = state.byId.get(e.source), t = state.byId.get(e.target);
+    return !!(s && t && nodePasses(s) && nodePasses(t));
+  }
+  function recomputeVisible() {
+    var nodes = state.graph.nodes.filter(nodePasses);
+    var set = new Set(nodes.map(function (n) { return n.id; }));
+    var edges = state.graph.edges.filter(function (e) {
+      return set.has(e.source) && set.has(e.target) && state.filters.provs.has(e.provenance);
+    });
+    state.vis = { nodes: nodes, edges: edges, nodeSet: set };
+  }
+
+  // ---------- ローカル注釈を graph に反映（既存優先で上書きしない） ----------
+  var appliedEdgeKeys = new Set();
+  function applyAnnDoc(doc) {
+    var log = [];
+    (doc.nodes || []).forEach(function (a) {
+      var kind = kindOfId(a.id);
+      if (!kind || (kind !== "store" && kind !== "boundary")) {
+        log.push("注釈ノード " + a.id + " は store/boundary の規則外なのでスキップ");
+        return;
+      }
+      var ex = state.byId.get(a.id);
+      if (ex) { // 既存ノードには新規キーだけ足す（上書きしない）
+        Object.keys(a.metadata || {}).forEach(function (k) {
+          if (ex.metadata[k] === undefined) ex.metadata[k] = a.metadata[k];
+        });
+        if (a.metadata && a.metadata.candidate === false) delete ex.metadata.candidate;
+        return;
+      }
+      var node = {
+        id: a.id, kind: kind, name: a.name || a.id,
+        metadata: Object.assign({}, a.metadata, { provenance: "human" }),
+      };
+      state.graph.nodes.push(node);
+      log.push("注釈でノード追加: " + a.id);
+    });
+    if ((doc.nodes || []).length) reindex(); // 上のノード追加を縁のチェックから見えるようにする
+    (doc.edges || []).forEach(function (a) {
+      if (EDGE_KINDS.indexOf(a.kind) < 0) { log.push("未知の縁の種別 " + a.kind + " をスキップ"); return; }
+      var s = state.byId.get(a.source), t = state.byId.get(a.target);
+      if (!s || !t) { log.push("存在しないノードへの縁をスキップ: " + a.source + " -> " + a.target); return; }
+      if (a.source === a.target) return;
+      var key = edgeKey(a);
+      if (appliedEdgeKeys.has(key)) return;
+      var dup = state.graph.edges.some(function (e) { return edgeKey(e) === key; });
+      if (dup) { appliedEdgeKeys.add(key); log.push("既存の縁と重複（既存優先）: " + a.source + " -" + a.kind + "-> " + a.target); return; }
+      var conf = typeof a.confidence === "number" ? Math.min(1, Math.max(0, a.confidence)) : 0.7;
+      var edge = { source: a.source, target: a.target, kind: a.kind, provenance: "human", confidence: conf };
+      if (a.note) edge.note = a.note;
+      state.graph.edges.push(edge);
+      appliedEdgeKeys.add(key);
+    });
+    (doc.metadata || []).forEach(function (m) {
+      var hits = state.graph.nodes.filter(function (n) { return matchNode(n, m.match); });
+      if (hits.length !== 1) { log.push("metadata 注釈の match が " + hits.length + " 件: スキップ"); return; }
+      var applied = false;
+      Object.keys(m.set || {}).forEach(function (k) {
+        if (hits[0].metadata === undefined) hits[0].metadata = {};
+        if (hits[0].metadata[k] === undefined) { hits[0].metadata[k] = m.set[k]; applied = true; }
+      });
+      if (applied) appliedMetaKeys.add(JSON.stringify([m.match, m.set]));
+    });
+    return log;
+  }
+  var appliedMetaKeys = new Set();
+  function matchNode(n, match) {
+    if (!match) return false;
+    var keys = Object.keys(match);
+    if (keys.length === 0) return false;
+    if (match.kind && n.kind !== match.kind) return false;
+    if (match.id && n.id !== match.id) return false;
+    if (match.path && n.id !== "code:" + match.path) return false;
+    if (match.name && n.name !== match.name) return false;
+    return true;
+  }
+
+  // ==========================================================
+  //  共通 UI
+  // ==========================================================
+  var toastTimer = null;
+  function toast(msg) {
+    var t = $("#toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.classList.remove("show"); }, 2600);
+  }
+  function copyText(text, okMsg) {
+    function fallback() {
+      try {
+        var ta = el("textarea", { style: "position:fixed;top:-1000px;left:0", text: text });
+        document.body.appendChild(ta);
+        ta.select();
+        var ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        toast(ok ? okMsg : "コピーできませんでした（URL は共有ボタンに保持）");
+      } catch (e) {
+        toast("コピーできませんでした");
+      }
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { toast(okMsg); }, fallback);
+    } else fallback();
+  }
+
+  function kindTag(n) {
+    return el("span", { class: "kind-label", dataset: { kind: n.kind } },
+      el("span", { class: "kind-dot" }), " ", KIND_LABEL[n.kind] || n.kind);
+  }
+  function provChip(p) {
+    return el("span", { class: "pv pv-" + p, title: "出所: " + provLabel(p) }, provLabel(p));
+  }
+  function nodeLink(id, label) {
+    var n = state.byId.get(id);
+    return el("span", {
+      class: "linkish", title: id,
+      onclick: function (ev) { ev.stopPropagation(); selectNode(id); },
+    }, label || (n ? n.name : id));
+  }
+  function confText(c) {
+    if (typeof c !== "number" || isNaN(c)) return "";
+    return "確度 " + (Math.round(c * 100) / 100);
+  }
+  function edgeProvenances(edges) {
+    var seen = [];
+    edges.forEach(function (e) { if (seen.indexOf(e.provenance) < 0) seen.push(e.provenance); });
+    return seen;
+  }
+  function nodeProvenances(id) {
+    var seen = [];
+    var p = nodeProvenance(state.byId.get(id) || {});
+    if (seen.indexOf(p) < 0) seen.push(p);
+    (state.out.get(id) || []).forEach(function (e) { if (seen.indexOf(e.provenance) < 0) seen.push(e.provenance); });
+    (state.in.get(id) || []).forEach(function (e) { if (seen.indexOf(e.provenance) < 0) seen.push(e.provenance); });
+    return seen;
+  }
+  // ノードに紐づく evidence（node.metadata.evidence + 縁の metadata.evidence）を file:line で一意化
+  function evidenceOf(n) {
+    var out = [], seen = new Set();
+    function push(ev) {
+      if (!ev || !ev.path) return;
+      var key = ev.path + ":" + ev.line + ":" + ev.signal;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push(ev);
+    }
+    ((n.metadata || {}).evidence || []).forEach(push);
+    (state.in.get(n.id) || []).forEach(function (e) {
+      if (e.kind !== "touches") return;
+      (((e.metadata || {}).evidence) || []).forEach(push);
+    });
+    return out;
+  }
+  function codeSignals(n) { return ((n.metadata || {}).signals) || []; }
+
+  // ==========================================================
+  //  選択・タブ・URL hash
+  // ==========================================================
+  var suppressingHash = false;
+  function shareUrl() {
+    var base = location.href.split("#")[0];
+    return base + "#" + hashQuery();
+  }
+  function hashQuery() {
+    var p = new URLSearchParams();
+    p.set("view", state.view);
+    if (state.flowId) p.set("flow", state.flowId);
+    if (state.selected) p.set("select", state.selected);
+    return p.toString();
+  }
+  function writeHash() {
+    var q = hashQuery();
+    suppressingHash = true;
+    try { history.replaceState(null, "", "#" + q); }
+    catch (e) { location.hash = q; }
+    setTimeout(function () { suppressingHash = false; }, 0);
+  }
+  function applyHash() {
+    var p = new URLSearchParams(location.hash.replace(/^#/, ""));
+    var v = p.get("view");
+    if (v && views[v]) state.view = v;
+    var f = p.get("flow");
+    if (f && state.byId.get(f) && state.byId.get(f).kind === "flow") state.flowId = f;
+    var s = p.get("select"); // URLSearchParams が %3A を ":" に戻してくれる
+    if (s && state.byId.has(s)) state.selected = s;
+    else if (s) toast("hash の select=" + s + " はこのグラフに見つかりません");
+  }
+
+  function selectNode(id, opts) {
+    opts = opts || {};
+    var n = state.byId.get(id);
+    if (!n) { toast("ノードが見つかりません: " + id); return; }
+    state.selected = id;
+    state.detailEdge = null;
+    if (n.kind === "step" && n.parent && state.byId.get(n.parent)) state.flowId = n.parent;
+    else if (n.kind === "flow") state.flowId = n.id;
+    if (opts.view && views[opts.view]) {
+      if (state.view !== opts.view) setView(opts.view, true);
+    }
+    writeHash();
+    renderDetail();
+    renderFlowSelect();
+    markSelectedInViews();
+    if (state.view === "graph") graphView.requestDraw();
+    if (state.view === "flow") flowView.drawEdges();
+  }
+  function openEdge(edge, opts) {
+    state.detailEdge = edge;
+    state.selected = edge.source;
+    writeHash();
+    renderDetail();
+    if (opts && opts.view && views[opts.view] && state.view !== opts.view) setView(opts.view, true);
+    if (opts && opts.expandCode) codeView.expand("code:" + edge.source.replace(/^code:/, ""));
+  }
+
+  function setView(v, skipHash) {
+    if (!views[v]) return;
+    state.view = v;
+    Array.prototype.forEach.call(document.querySelectorAll(".tab-btn"), function (b) {
+      b.setAttribute("aria-selected", b.dataset.view === v ? "true" : "false");
+    });
+    Object.keys(views).forEach(function (k) {
+      views[k].root.classList.toggle("active", k === v);
+    });
+    views[v].ensure();
+    views[v].render();
+    if (!skipHash) writeHash();
+    if (v === "graph") graphView.requestDraw();
+  }
+
+  function markSelectedInViews() {
+    document.querySelectorAll("[data-node]").forEach(function (node) {
+      node.classList.toggle("sel", node.dataset.node === state.selected);
+      if (node.classList.contains("fnode") || node.classList.contains("sub-card")) {
+        node.classList.toggle("selected", node.dataset.node === state.selected);
+      }
+    });
+    document.querySelectorAll("tr[data-node]").forEach(function (tr) {
+      tr.classList.toggle("sel", tr.dataset.node === state.selected);
+    });
+  }
+
+  function refresh(opts) {
+    recomputeVisible();
+    renderStatus();
+    renderChips();
+    renderFlowSelect();
+    views[state.view].ensure();
+    views[state.view].render();
+    renderDetail();
+    if (state.view === "graph") graphView.syncFromFilter();
+    if (opts && opts.keepSelection === false) { /* 将来用 */ }
+  }
+
+  // ==========================================================
+  //  ヘッダ（chips / フロー選択 / 検索）とステータスバー
+  // ==========================================================
+  function renderChips() {
+    var kinds = $("#kind-chips");
+    var provs = $("#prov-chips");
+    clear(kinds).appendChild(el("span", { class: "gl" }, "種別"));
+    clear(provs).appendChild(el("span", { class: "gl" }, "出所"));
+    KINDS.forEach(function (k) {
+      var total = state.graph.nodes.filter(function (n) { return n.kind === k; }).length;
+      kinds.appendChild(el("button", {
+        class: "chip" + (state.filters.kinds.has(k) ? " on" : ""),
+        dataset: { kind: k, chip: "kind-" + k }, "aria-pressed": state.filters.kinds.has(k) ? "true" : "false",
+        onclick: function () { toggleSet(state.filters.kinds, k); refresh(); },
+      }, KIND_LABEL[k] + " " + total));
+    });
+    PROV_KINDS.forEach(function (p) {
+      var total = state.graph.nodes.filter(function (n) { return nodeProvenance(n) === p; }).length;
+      provs.appendChild(el("button", {
+        class: "chip" + (state.filters.provs.has(p) ? " on" : ""),
+        dataset: { chip: "prov-" + p }, "aria-pressed": state.filters.provs.has(p) ? "true" : "false",
+        onclick: function () { toggleSet(state.filters.provs, p); refresh(); },
+      }, PROV_LABEL[p] + " " + total));
+    });
+    var un = $("#chip-unlinked");
+    un.classList.toggle("on", state.filters.unlinked);
+    un.setAttribute("aria-pressed", state.filters.unlinked ? "true" : "false");
+  }
+  function toggleSet(set, v) {
+    if (set.has(v)) set.delete(v); else set.add(v);
+  }
+
+  function flows() {
+    return state.graph.nodes.filter(function (n) { return n.kind === "flow"; })
+      .sort(function (a, b) { return a.name < b.name ? -1 : a.name > b.name ? 1 : 0; });
+  }
+  function renderFlowSelect() {
+    var sel = $("#flow-select");
+    var fs = flows();
+    if (!fs.length) { sel.hidden = true; return; }
+    sel.hidden = false;
+    if (!state.flowId || !state.byId.has(state.flowId)) state.flowId = fs[0].id;
+    var want = state.flowId;
+    if (sel.options.length !== fs.length || sel.value !== want) {
+      clear(sel);
+      fs.forEach(function (f) { sel.appendChild(el("option", { value: f.id, text: f.name })); });
+    }
+    sel.value = want;
+  }
+
+  function renderStatus() {
+    var bar = clear($("#status-bar"));
+    bar.appendChild(el("span", { id: "status-counts" },
+      "表示 " + state.vis.nodes.length + " / 全 " + state.graph.nodes.length + " ノード"));
+    bar.appendChild(el("span", { class: "dot" }, "・"));
+    bar.appendChild(el("span", { id: "status-edge-counts" },
+      "表示 " + state.vis.edges.length + " / 全 " + state.graph.edges.length + " 縁"));
+    bar.appendChild(el("span", { class: "dot" }, "・"));
+    var annCount = state.ann.nodes.length + state.ann.edges.length + state.ann.metadata.length;
+    bar.appendChild(el("span", {}, "ローカル注釈 " + annCount + " 件" + (storage.available ? "" : "（localStorage 不使用）")));
+    if (state.flowId && state.byId.get(state.flowId)) {
+      bar.appendChild(el("span", { class: "dot" }, "・"));
+      bar.appendChild(el("span", {}, "フロー: " + state.byId.get(state.flowId).name));
+    }
+    var w = state.graph.warnings && state.graph.warnings.length;
+    if (w) {
+      bar.appendChild(el("span", { class: "dot" }, "・"));
+      bar.appendChild(el("span", { class: "badge empty-io", title: state.graph.warnings.join("\n") }, "マージ警告 " + w + " 件"));
+    }
+  }
+
+  // ---------- 検索 ----------
+  var searchCache = null;
+  function buildSearchCache() {
+    searchCache = state.graph.nodes.map(function (n) {
+      var snips = "";
+      if (n.kind === "code") {
+        snips = codeSignals(n).slice(0, 60).map(function (s) { return (s.snippet || "").slice(0, 200); }).join("\n");
+      }
+      return { id: n.id, hay: (n.name + "\n" + n.id + "\n" + snips).toLowerCase() };
+    });
+  }
+  function runSearch(qRaw) {
+    var q = qRaw.trim().toLowerCase();
+    var box = $("#search-results");
+    clear(box);
+    if (q.length < 1) { box.classList.remove("open"); return; }
+    if (!searchCache) buildSearchCache();
+    var hits = [];
+    for (var i = 0; i < searchCache.length && hits.length < SEARCH_CAP; i++) {
+      if (searchCache[i].hay.indexOf(q) >= 0) hits.push(searchCache[i].id);
+    }
+    box.classList.add("open");
+    box.appendChild(el("div", { class: "sr-head" },
+      hits.length ? hits.length + " 件（上限 " + SEARCH_CAP + "）— クリックで選択" : "該当なし"));
+    hits.forEach(function (id) {
+      var n = state.byId.get(id);
+      if (!n) return;
+      var row = el("div", { class: "sr-item", dataset: { node: id, kind: n.kind, testid: "sr-item" }, onclick: function () {
+        selectNode(id);
+        box.classList.remove("open");
+        clear(box);
+        $("#search-input").value = n.name;
+      } },
+        el("div", { class: "sr-name" }, kindTag(n), el("b", {}, n.name),
+          state.vis.nodeSet.has(id) ? null : el("span", { class: "badge", title: "フィルタで非表示" }, "フィルタ外")),
+        el("div", { class: "sr-id" }, id));
+      if (n.kind === "code") {
+        var hit = codeSignals(n).filter(function (s) {
+          return (s.snippet || "").toLowerCase().indexOf(q) >= 0;
+        })[0];
+        if (hit) row.appendChild(el("div", { class: "sr-note" }, (hit.path || n.name) + ":" + hit.line + " " + (hit.snippet || "").slice(0, 90)));
+      }
+      box.appendChild(row);
+    });
+  }
+
+  // ==========================================================
+  //  注釈の保存・書き出し・クリア
+  // ==========================================================
+  function addAnnNode(node) {
+    if (state.ann.nodes.some(function (n) { return n.id === node.id; })) return;
+    state.ann.nodes.push(node);
+  }
+  function addAnnEdge(edge) {
+    if (state.ann.edges.some(function (e) { return edgeKey(e) === edgeKey(edge); })) return;
+    state.ann.edges.push(edge);
+  }
+  function addAnnMeta(match, set) {
+    var key = JSON.stringify([match, set]);
+    if (appliedMetaKeys.has(key)) return;
+    appliedMetaKeys.add(key);
+    state.ann.metadata.push({ match: match, set: set });
+  }
+  function saveAndApply(annDoc, msg) {
+    var logs = applyAnnDoc(annDoc);
+    persistAnn();
+    reindex();
+    refresh();
+    if (state.view === "flow") flowView.drawEdges();
+    if (logs && logs.length) logs.forEach(function (l) { console.info("[注釈] " + l); });
+    toast(msg + (storage.available ? "" : "（ブラウザ保存に失敗: このセッション内のみ有効）"));
+  }
+  function exportAnn() {
+    var doc = {
+      schemaVersion: 1, producer: "human",
+      nodes: state.ann.nodes, edges: state.ann.edges, metadata: state.ann.metadata,
+    };
+    var text = JSON.stringify(doc, null, 2) + "\n";
+    var blob = new Blob([text], { type: "application/json" });
+    var a = el("a", { href: URL.createObjectURL(blob), download: "human.json" });
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () {
+      URL.revokeObjectURL(a.href);
+      document.body.removeChild(a);
+    }, 4000);
+    var n = doc.nodes.length + doc.edges.length + doc.metadata.length;
+    toast(n ? "human.json をダウンロードしました（注釈 " + n + " 件）" : "注釈はまだありません");
+  }
+  function clearAnn() {
+    if (!window.confirm("ブラウザ内の注釈をすべて消しますか？ リポジトリの annotations/human.json は消えません。")) return;
+    storage.remove();
+    state.ann = emptyAnn();
+    appliedEdgeKeys = new Set();
+    appliedMetaKeys = new Set();
+    state.selected = null;
+    state.detailEdge = null;
+    rebuildFromScratch();
+    toast("ローカル注釈をクリアしました");
+  }
+  // 埋め込みデータのみに戻して作り直す（注釈クリア用）
+  function rebuildFromScratch() {
+    state.graph = JSON.parse(rawDataJson);
+    state.graph.nodes.forEach(function (n) { if (!n.metadata) n.metadata = {}; });
+    if (!Array.isArray(state.graph.edges)) state.graph.edges = [];
+    if (!Array.isArray(state.graph.warnings)) state.graph.warnings = [];
+    reindex();
+    state.flowId = (flows()[0] || {}).id || null;
+    graphView.reset();
+    refresh();
+  }
+
+  // ==========================================================
+  //  タブ 1: フロー図（3 層レイアウト + SVG ベジェ縁）
+  // ==========================================================
+  var flowView = {
+    root: null, head: null, cols: null, svg: null, scroll: null, band: null,
+    built: false, cardOf: new Map(), edgePairs: [],
+    ensure: function () {
+      if (this.built) return;
+      this.root = $("#view-flow");
+      this.root.classList.add("no-pad");
+      this.scroll = el("div", { class: "flow-scroll", id: "flow-scroll" });
+      this.head = el("div", { class: "legend", id: "flow-legend" });
+      this.cols = el("div", { class: "flow-cols", id: "flow-cols" });
+      this.svg = el("svg", { id: "flow-edges", "aria-hidden": "true" });
+      this.band = el("div", { class: "cand-band", id: "candidate-band" });
+      this.cols.appendChild(this.svg);
+      this.scroll.appendChild(this.head);
+      this.scroll.appendChild(this.cols);
+      this.scroll.appendChild(this.band);
+      this.root.appendChild(this.scroll);
+      var self = this;
+      this.scroll.addEventListener("scroll", function () { self.scheduleEdges(); });
+      window.addEventListener("resize", function () { if (state.view === "flow") self.scheduleEdges(); });
+      this.built = true;
+    },
+    render: function () {
+      if (!this.root) return;
+      var self = this;
+      this.cardOf = new Map();
+      this.edgePairs = [];
+      clear(this.head); clear(this.cols); clear(this.band);
+      this.cols.appendChild(this.svg);
+      var flow = state.byId.get(state.flowId);
+      if (!flow) {
+        this.cols.appendChild(el("div", { class: "empty-note" }, "フローがありません。flows/*.json を定義して merge してください。"));
+        return;
+      }
+      var steps = flowSteps(flow);
+      this.head.appendChild(el("b", {}, flow.name));
+      if (flow.metadata && flow.metadata.owner) this.head.appendChild(el("span", {}, "owner: " + flow.metadata.owner));
+      if (flow.metadata && flow.metadata.description) this.head.appendChild(el("span", { class: "dim" }, flow.metadata.description));
+      this.head.appendChild(el("span", { class: "dim" }, "ステップ " + steps.length));
+      [["reads", "読み取り reads"], ["writes", "書き込み writes"], ["invokes", "呼び出し invokes"]].forEach(function (p) {
+        var i = el("i", { class: p[0] });
+        i.style.borderColor = "var(--e-" + p[0] + ")";
+        var span = el("span", {}, i, p[1]);
+        this.head.appendChild(span);
+      }, this);
+      this.head.appendChild(el("span", {}, el("i", { class: "dash", style: "border-color:#8b98a9" }), "破線 = LLM / 人間の注釈"));
+
+      // --- 左右列に置くノードを決める ---
+      var left = [], right = [], bounds = [];
+      var seen = new Set();
+      steps.forEach(function (st) {
+        outsOf(st.id).forEach(function (e) {
+          var t = state.byId.get(e.target);
+          if (!t || !state.vis.nodeSet.has(t.id)) return;
+          if (e.kind === "reads" && t.kind === "store" && !seen.has(t.id)) { seen.add(t.id); left.push(t); }
+          if (e.kind === "invokes" && t.kind === "boundary" && !seen.has(t.id)) { seen.add(t.id); bounds.push(t); }
+        });
+      });
+      steps.forEach(function (st) {
+        outsOf(st.id).forEach(function (e) {
+          var t = state.byId.get(e.target);
+          if (!t || !state.vis.nodeSet.has(t.id) || e.kind !== "writes" || t.kind !== "store" || seen.has(t.id)) return;
+          seen.add(t.id);
+          right.push(t);
+        });
+      });
+      var colNodes = seen;
+
+      // --- 左: 入力ソース ---
+      var colL = el("div", { class: "col", id: "col-input" },
+        el("div", { class: "col-head" }, "入力ソース（reads）", el("span", { class: "n" }, String(Math.min(left.length, FLOW_COL_CAP)))));
+      left.slice(0, FLOW_COL_CAP).forEach(function (n) { colL.appendChild(flowCard(n, { sub: "入力" })); });
+      if (left.length > FLOW_COL_CAP) colL.appendChild(moreNote(left.length - FLOW_COL_CAP));
+
+      // --- 中央: ステップ列 ---
+      var colS = el("div", { class: "col", id: "col-steps" },
+        el("div", { class: "col-head" }, "ステップ列（next 順）", el("span", { class: "n" }, String(steps.length))));
+      steps.slice(0, FLOW_COL_CAP).forEach(function (st, i) {
+        if (i > 0) colS.appendChild(el("div", { class: "step-sep" }, el("span", { class: "arrow" }, "↓"), String(i + 1) + " 番目"));
+        colS.appendChild(flowCard(st.node, { step: true, order: i + 1 }));
+      });
+      if (steps.length > FLOW_COL_CAP) colS.appendChild(moreNote(steps.length - FLOW_COL_CAP));
+
+      // --- 右: 出力・境界（境界の下にその向こうの格納先） ---
+      var colR = el("div", { class: "col", id: "col-output" },
+        el("div", { class: "col-head" }, "出力・境界", el("span", { class: "n" }, String(right.length + bounds.length))));
+      right.slice(0, FLOW_COL_CAP).forEach(function (n) { colR.appendChild(flowCard(n, { sub: "出力" })); });
+      bounds.forEach(function (b) {
+        colR.appendChild(flowCard(b, { sub: "境界" }));
+        var subs = boundaryBackends(b);
+        var wrap = el("div", { class: "sub-wrap", dataset: { under: b.id } },
+          el("div", { class: "lbl dim" }, "↓ API の向こうの格納先"));
+        subs.forEach(function (x) {
+          var card = el("div", {
+            class: "sub-card", dataset: { node: x.node.id, kind: x.node.kind },
+            onclick: function (ev) { ev.stopPropagation(); selectNode(x.node.id); },
+            title: x.node.id,
+          },
+            el("span", { class: "kind-label", dataset: { kind: x.node.kind } }, el("span", { class: "kind-dot" })),
+            el("span", {}, x.node.name),
+            el("span", { class: "lbl" }, x.edge.kind === "reads" ? "読み取り" : "書き込み"),
+            provChip(x.edge.provenance),
+            isUnlinked(x.node) ? el("span", { class: "badge cand" }, "未紐づけ") : null);
+          wrap.appendChild(card);
+          self.edgePairs.push({ edge: x.edge, from: b.id, to: x.node.id });
+        }, self);
+        if (subs.length) colR.appendChild(wrap);
+        else colR.appendChild(el("div", { class: "hint", style: "margin-left:14px" }, "格納先が未紐づけ — 詳細パネルの後付けフォームで追加できます"));
+      });
+      if (right.length > FLOW_COL_CAP) colR.appendChild(moreNote(right.length - FLOW_COL_CAP));
+
+      this.cols.appendChild(colL);
+      this.cols.appendChild(colS);
+      this.cols.appendChild(colR);
+
+      // --- 下段: 未紐づけ候補 ---
+      var cands = state.vis.nodes.filter(function (n) {
+        return (n.kind === "store" || n.kind === "boundary") && isUnlinked(n) && !colNodes.has(n.id);
+      });
+      this.band.appendChild(el("div", { class: "col-head" }, "未紐づけ候補（candidate）",
+        el("span", { class: "n" }, String(Math.min(cands.length, CAND_CAP)) + " / " + cands.length)));
+      var grid = el("div", { class: "cand-grid" });
+      cands.slice(0, CAND_CAP).forEach(function (n) { grid.appendChild(flowCard(n, { dashed: true })); });
+      if (cands.length > CAND_CAP) grid.appendChild(moreNote(cands.length - CAND_CAP));
+      if (!cands.length) grid.appendChild(el("div", { class: "hint" }, "未紐づけの候補はありません"));
+      this.band.appendChild(grid);
+
+      // --- 描画後に SVG 縁を通す ---
+      steps.forEach(function (st) {
+        outsOf(st.id).forEach(function (e) {
+          var t = state.byId.get(e.target);
+          if (!t) return;
+          if (e.kind === "reads" || e.kind === "writes" || e.kind === "invokes") self.edgePairs.push({ edge: e, from: st.id, to: t.id });
+        });
+      });
+      this.scheduleEdges();
+      markSelectedInViews();
+    },
+    scheduleEdges: function () {
+      var self = this;
+      if (this._raf) cancelAnimationFrame(this._raf);
+      this._raf = requestAnimationFrame(function () { self._raf = null; self.drawEdges(); });
+    },
+    drawEdges: function () {
+      if (!this.built) return;
+      var svg = this.svg;
+      clear(svg);
+      var box = this.cols.getBoundingClientRect();
+      var w = Math.max(this.cols.scrollWidth, box.width), h = Math.max(this.cols.scrollHeight, box.height);
+      svg.setAttribute("width", w);
+      svg.setAttribute("height", h);
+      svg.setAttribute("viewBox", "0 0 " + w + " " + h);
+      var defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+      [["reads", "#2dd4bf"], ["writes", "#f0883e"], ["invokes", "#bc8cff"]].forEach(function (p) {
+        var m = document.createElementNS("http://www.w3.org/2000/svg", "marker");
+        m.setAttribute("id", "mk-" + p[0]);
+        m.setAttribute("markerWidth", "7"); m.setAttribute("markerHeight", "7");
+        m.setAttribute("refX", "6"); m.setAttribute("refY", "3");
+        m.setAttribute("orient", "auto"); m.setAttribute("markerUnits", "strokeWidth");
+        var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", "M0,0 L6,3 L0,6 z");
+        path.setAttribute("fill", p[1]);
+        m.appendChild(path);
+        defs.appendChild(m);
+      });
+      svg.appendChild(defs);
+      this.edgePairs.forEach(function (pair) {
+        var a = document.querySelector('#view-flow [data-node="' + cssEscape(pair.from) + '"]');
+        var b = document.querySelector('#view-flow [data-node="' + cssEscape(pair.to) + '"]');
+        if (!a || !b) return;
+        var d = bezier(box, a.getBoundingClientRect(), b.getBoundingClientRect());
+        if (!d) return;
+        var k = pair.edge.kind;
+        var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", d);
+        path.setAttribute("class", "edge " + k + ((pair.edge.provenance === "llm" || pair.edge.provenance === "human") ? " dash" : "") +
+          (state.selected && (pair.edge.source === state.selected || pair.edge.target === state.selected) ? " hl" : ""));
+        path.setAttribute("marker-end", "url(#mk-" + k + ")");
+        path.setAttribute("data-edge", pair.edge.source + "|" + k + "|" + pair.edge.target);
+        var title = document.createElementNS("http://www.w3.org/2000/svg", "title");
+        title.textContent = k + " / " + provLabel(pair.edge.provenance) + (pair.edge.note ? "\n" + pair.edge.note : "");
+        path.appendChild(title);
+        path.style.pointerEvents = "stroke";
+        path.style.cursor = "pointer";
+        (function (edge) {
+          path.addEventListener("click", function () { openEdge(edge); });
+        })(pair.edge);
+        svg.appendChild(path);
+      });
+    },
+  };
+  function cssEscape(s) {
+    if (window.CSS && CSS.escape) return CSS.escape(s);
+    return String(s).replace(/["\\]/g, "\\$&");
+  }
+  function moreNote(n) {
+    return el("div", { class: "hint" }, "ほか " + n + " 件は初期表示を軽くするため非表示（フィルタか検索で絞り込んでください）");
+  }
+  function outsOf(id) {
+    return (state.out.get(id) || []).filter(function (e) {
+      return state.vis.nodeSet.has(e.target) && state.filters.provs.has(e.provenance);
+    });
+  }
+  function insOf(id) {
+    return (state.in.get(id) || []).filter(function (e) {
+      return state.vis.nodeSet.has(e.source) && state.filters.provs.has(e.provenance);
+    });
+  }
+  function flowSteps(flow) {
+    var list = [];
+    (state.out.get(flow.id) || []).forEach(function (e) {
+      if (e.kind !== "contains") return;
+      var n = state.byId.get(e.target);
+      if (n && n.kind === "step" && state.vis.nodeSet.has(n.id)) {
+        list.push({ node: n, id: n.id, order: (e.metadata && e.metadata.order) || 0 });
+      }
+    });
+    if (!list.length) {
+      state.graph.nodes.forEach(function (n) {
+        if (n.kind === "step" && n.parent === flow.id && state.vis.nodeSet.has(n.id)) list.push({ node: n, id: n.id, order: 0 });
+      });
+    }
+    list.sort(function (a, b) { return a.order - b.order || (a.id < b.id ? -1 : 1); });
+    return list;
+  }
+  // boundary → store の reads/writes（API の向こう側）
+  function boundaryBackends(b) {
+    var out = [], seen = new Set();
+    outsOf(b.id).forEach(function (e) {
+      if (e.kind !== "reads" && e.kind !== "writes") return;
+      var t = state.byId.get(e.target);
+      if (!t || t.kind !== "store" || seen.has(t.id)) return;
+      seen.add(t.id);
+      out.push({ node: t, edge: e });
+    });
+    return out;
+  }
+  function stepIoCount(id) {
+    var c = 0;
+    (state.out.get(id) || []).forEach(function (e) {
+      if (e.kind === "reads" || e.kind === "writes" || e.kind === "invokes") c++;
+    });
+    return c;
+  }
+  function flowCard(n, opts) {
+    opts = opts || {};
+    var md = n.metadata || {};
+    var io = stepIoCount(n.id);
+    var un = isUnlinked(n);
+    var card = el("div", {
+      class: "fnode" + (opts.dashed || (un && (n.kind === "store" || n.kind === "boundary")) ? " dashed" : "") +
+        (state.selected === n.id ? " selected" : ""),
+      dataset: { node: n.id, kind: n.kind, role: "flow-card" },
+      title: n.id,
+      onclick: function () { selectNode(n.id); },
+    },
+      el("div", { class: "t" },
+        el("span", { class: "kind-label", dataset: { kind: n.kind } }, el("span", { class: "kind-dot" })),
+        opts.step ? el("span", { class: "dim mono" }, String(opts.order) + ".") : null,
+        el("span", { class: "nm" }, n.name),
+        un && n.kind === "step" && io === 0 ? el("span", { class: "badge empty-io" }, "未記入") : null,
+        un && (n.kind === "store" || n.kind === "boundary") ? el("span", { class: "badge cand" }, "未紐づけ") : null),
+      el("div", { class: "id" }, n.id));
+    var meta = [];
+    if (md.owner) meta.push("owner: " + md.owner);
+    if (md.storeKind) meta.push("store: " + md.storeKind);
+    if (md.boundaryKind) meta.push("boundary: " + md.boundaryKind);
+    if (md.sla) meta.push("SLA: " + md.sla);
+    if (md.docs) meta.push(el("span", { class: "linkish", onclick: function (ev) { ev.stopPropagation(); selectNode(n.id); }, title: String(md.docs) }, "docs"));
+    if (meta.length) card.appendChild(el("div", { class: "meta" }, meta));
+    if (md.description) card.appendChild(el("div", { class: "meta" }, md.description));
+    if (opts.step) {
+      var ioLine = ioLineOf(n.id);
+      if (ioLine.length) card.appendChild(el("div", { class: "meta" }, ioLine));
+    }
+    card.appendChild(el("div", { class: "pvs" }, nodeProvenances(n.id).map(provChip)));
+    return card;
+  }
+  function ioLineOf(id) {
+    var out = [];
+    outsOf(id).forEach(function (e) {
+      if (e.kind !== "reads" && e.kind !== "writes" && e.kind !== "invokes" && e.kind !== "implemented-by") return;
+      var t = state.byId.get(e.target);
+      if (!t) return;
+      out.push(el("span", { class: "linkish", title: e.kind, onclick: function (ev) { ev.stopPropagation(); selectNode(t.id); } },
+        (e.kind === "reads" ? "in←" : e.kind === "writes" ? "out→" : e.kind === "invokes" ? "call→" : "code:") + t.name));
+    });
+    return out;
+  }
+  // 2 つのカードの間にベジェ。a/b の相対位置で出る辺・入る辺を決める
+  function bezier(box, ra, rb) {
+    var ax = ra.left - box.left, ay = ra.top - box.top, aw = ra.width, ah = ra.height;
+    var bx = rb.left - box.left, by = rb.top - box.top, bw = rb.width, bh = rb.height;
+    var acx = ax + aw / 2, bcx = bx + bw / 2;
+    var x1, y1, x2, y2, horizontal;
+    if (Math.abs(acx - bcx) > 30) {
+      horizontal = true;
+      if (bcx < acx) { x1 = ax; x2 = bx + bw; } else { x1 = ax + aw; x2 = bx; }
+      y1 = ay + ah / 2; y2 = by + bh / 2;
+    } else {
+      horizontal = false;
+      if (by < ay) { y1 = ay; y2 = by + bh; } else { y1 = ay + ah; y2 = by; }
+      x1 = acx; x2 = bcx;
+    }
+    var dx = x2 - x1, dy = y2 - y1;
+    var c;
+    if (horizontal) {
+      c = Math.max(36, Math.abs(dx) * 0.45);
+      return "M" + x1 + "," + y1 + " C" + (x1 + (dx > 0 ? c : -c)) + "," + y1 + " " + (x2 + (dx > 0 ? -c : c)) + "," + y2 + " " + x2 + "," + y2;
+    }
+    c = Math.max(24, Math.abs(dy) * 0.4);
+    return "M" + x1 + "," + y1 + " C" + x1 + "," + (y1 + (dy > 0 ? c : -c)) + " " + x2 + "," + (y2 + (dy > 0 ? -c : c)) + " " + x2 + "," + y2;
+  }
+
+  // ==========================================================
+  //  タブ 2: グラフ（canvas 力布局・自作）
+  //  大量ノード向けの保険: 斥力はグリッド近傍のみ + 1 反復あたりの
+  //  組数上限、ラベルは画面内 & 上位次数のみ（全件描かない）、
+  //  収束したら rAF を止める。
+  // ==========================================================
+  var EDGE_COLOR = {
+    reads: "#2dd4bf", writes: "#f0883e", invokes: "#bc8cff",
+    "implemented-by": "#6e7681", touches: "#4d5866", contains: "#39424e", next: "#3fb950",
+  };
+  var graphView = {
+    root: null, canvas: null, ctx: null, hud: null, hudFocus: null, hudZoom: null,
+    built: false, dpr: 1, pos: new Map(), raf: null, ticking: false,
+    sim: { nodes: [], edges: [], temp: 0, k: 118, ticks: 0 },
+    view: { x: 0, y: 0, k: 1 },
+    focusSet: null, userMoved: false, topIds: new Set(), sortedEdges: null,
+    skippedEdges: 0, shownSkipBucket: -1,
+    ensure: function () {
+      if (this.built) return;
+      this.root = $("#view-graph");
+      this.root.classList.add("no-pad");
+      var host = el("div", { class: "canvas-host" });
+      this.canvas = el("canvas", { id: "graph-canvas" });
+      this.hud = el("div", { class: "canvas-hud" },
+        el("span", { class: "box" }, "ホイール=拡大 / ドラッグ=平行移動 / クリック=選択"),
+        el("span", { class: "box" }, "⇧クリック = 2 ホップにフォーカス"),
+        this.hudZoom = el("span", { class: "box", id: "hud-zoom" }, "ズーム 100%"),
+        this.hudFocus = el("span", { class: "box", id: "hud-focus" }, ""),
+        el("button", { class: "btn small", onclick: (function (self) {
+          return function () { self.sim.temp = self.sim.k * 0.6; self.userMoved = false; self.start(); };
+        })(this) }, "レイアウト再実行"),
+        el("button", { class: "btn small", onclick: (function (self) {
+          return function () { self.userMoved = false; self.fit(); self.requestDraw(); };
+        })(this) }, "画面に合わせる"));
+      host.appendChild(this.canvas);
+      host.appendChild(this.hud);
+      this.root.appendChild(host);
+      this.ctx = this.canvas.getContext("2d");
+      this.bindEvents();
+      var self = this;
+      if (window.ResizeObserver) {
+        new ResizeObserver(function () { self.requestDraw(); }).observe(this.root);
+      }
+      this.built = true;
+    },
+    reset: function () { this.pos = new Map(); this.focusSet = null; this.userMoved = false; },
+    syncFromFilter: function () {
+      if (!this.built) return;
+      var self = this;
+      // pos の値が sim.nodes の要素そのもの（座標も速度も同じオブジェクトで共有する）
+      var nextPos = new Map();
+      var nodes = [];
+      state.vis.nodes.forEach(function (n, i) {
+        var p = self.pos.get(n.id);
+        if (!p) {
+          var a = i * 2.399963, r = 16 * Math.sqrt(i + 1);
+          p = { x: r * Math.cos(a), y: r * Math.sin(a), dx: 0, dy: 0 };
+        }
+        p.id = n.id; p.kind = n.kind; p.deg = state.degree.get(n.id) || 0; p.dx = 0; p.dy = 0;
+        nextPos.set(n.id, p);
+        nodes.push(p);
+      });
+      // フィルタで消えたノードの座標は捨てる
+      this.pos = nextPos;
+      this.sim.nodes = nodes;
+      var ids = new Set(nodes.map(function (n) { return n.id; }));
+      this.sim.edges = state.vis.edges.filter(function (e) { return ids.has(e.source) && ids.has(e.target); });
+      // ラベル上位リスト（次数上位 40）
+      var deg = state.degree;
+      this.sortedEdges = this.sim.edges.slice().sort(function (x, y) {
+        return ((deg.get(y.source) || 0) + (deg.get(y.target) || 0)) - ((deg.get(x.source) || 0) + (deg.get(x.target) || 0));
+      });
+      this.topIds = new Set(nodes.slice().sort(function (a, b) { return b.deg - a.deg; }).slice(0, 40)
+        .map(function (n) { return n.id; }));
+      if (this.focusSet) {
+        var keep = new Set();
+        this.focusSet.forEach(function (id) { if (ids.has(id)) keep.add(id); });
+        this.focusSet = keep.size ? keep : null;
+      }
+      if (!this.userMoved) this.fit();
+    },
+    render: function () {
+      if (!this.built) return;
+      this.syncFromFilter();
+      if (this.sim.temp < 4 && this.sim.nodes.length > 1 && !this.ticking) this.sim.temp = this.sim.k * 0.35;
+      this.start();
+      this.updateHud();
+    },
+    // ---- 力布局の 1 反復 ----
+    tick: function () {
+      var ns = this.sim.nodes;
+      var k = this.sim.k;
+      if (ns.length < 2) { this.sim.temp = 0; return; }
+      var big = ns.length > 4000;
+      var cell = k, grid = new Map(), i, j;
+      for (i = 0; i < ns.length; i++) {
+        var p = ns[i];
+        p.gx = Math.floor(p.x / cell); p.gy = Math.floor(p.y / cell);
+        var key = p.gx + ":" + p.gy;
+        var arr = grid.get(key);
+        if (!arr) { arr = []; grid.set(key, arr); }
+        arr.push(p);
+      }
+      var pairs = 0, CAP = big ? 50000 : 140000;
+      for (i = 0; ns.length && i < ns.length; i++) {
+        var a = ns[i];
+        if (pairs > CAP) break;
+        for (var ox = -1; ox <= 1; ox++) {
+          for (var oy = -1; oy <= 1; oy++) {
+            var nb = grid.get((a.gx + ox) + ":" + (a.gy + oy));
+            if (!nb) continue;
+            for (j = 0; j < nb.length; j++) {
+              var b = nb[j];
+              if (a === b) continue;
+              if (++pairs > CAP) break;
+              var ddx = a.x - b.x, ddy = a.y - b.y;
+              var d2 = ddx * ddx + ddy * ddy;
+              if (d2 < 0.0001) { ddx = 0.7; ddy = 0.3; d2 = 0.58; }
+              var d = Math.sqrt(d2);
+              var fr = (k * k) / d;
+              a.dx += (ddx / d) * fr;
+              a.dy += (ddy / d) * fr;
+            }
+          }
+        }
+      }
+      var edges = this.sim.edges;
+      for (i = 0; i < edges.length; i++) {
+        var e = edges[i];
+        var s = this.posById(e.source), t = this.posById(e.target);
+        if (!s || !t) continue;
+        var edx = s.x - t.x, edy = s.y - t.y;
+        var ed = Math.sqrt(edx * edx + edy * edy) || 0.01;
+        var want = k * (e.kind === "contains" ? 0.75 : e.kind === "next" ? 0.9 : 1.2);
+        var fa = (ed * ed) / k * (e.kind === "contains" || e.kind === "next" ? 0.9 : 0.45);
+        s.dx -= (edx / ed) * fa; s.dy -= (edy / ed) * fa;
+        t.dx += (edx / ed) * fa; t.dy += (edy / ed) * fa;
+        if (ed > want * 4) { // 離れすぎた縁は強く寄せる（はぐれ防止）
+          s.dx -= edx * 0.02; s.dy -= edy * 0.02;
+          t.dx += edx * 0.02; t.dy += edy * 0.02;
+        }
+      }
+      var temp = this.sim.temp;
+      for (i = 0; i < ns.length; i++) {
+        var q = ns[i];
+        q.dx -= q.x * 0.06; q.dy -= q.y * 0.06; // 中心引力
+        var len = Math.sqrt(q.dx * q.dx + q.dy * q.dy);
+        if (len > 0.0001) {
+          var s2 = Math.min(len, temp) / len;
+          q.x += q.dx * s2; q.y += q.dy * s2;
+        }
+        q.dx = 0; q.dy = 0;
+      }
+      this.sim.temp = Math.max(0, temp * (big ? 0.955 : 0.975) - 0.02);
+      this.sim.ticks++;
+    },
+    posById: function (id) { return this.pos.get(id); },
+    start: function () {
+      var self = this;
+      if (this.raf) return;
+      this.ticking = true;
+      this.raf = requestAnimationFrame(function loop() {
+        self.raf = null;
+        var active = self.root && self.root.classList.contains("active");
+        var ns = self.sim.nodes.length;
+        var per = ns > 2500 ? 1 : ns > 800 ? 2 : ns > 200 ? 4 : 6;
+        if (active && self.sim.temp > 1.2) {
+          for (var i = 0; i < per; i++) self.tick();
+          if (!self.userMoved) self.fit();
+        } else {
+          self.ticking = false;
+        }
+        self.draw();
+        if (self.ticking) self.raf = requestAnimationFrame(loop);
+      });
+    },
+    requestDraw: function () {
+      var self = this;
+      if (this._drawRaf) return;
+      this._drawRaf = requestAnimationFrame(function () { self._drawRaf = null; self.draw(); });
+    },
+    fit: function () {
+      var ns = this.sim.nodes;
+      if (!ns.length || !this.canvas) return;
+      var set = this.focusSet;
+      var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, n = 0;
+      for (var i = 0; i < ns.length; i++) {
+        if (set && !set.has(ns[i].id)) continue;
+        x0 = Math.min(x0, ns[i].x); y0 = Math.min(y0, ns[i].y);
+        x1 = Math.max(x1, ns[i].x); y1 = Math.max(y1, ns[i].y);
+        n++;
+      }
+      if (!n) return;
+      var w = this.canvas.clientWidth || 800, h = this.canvas.clientHeight || 600;
+      var pad = 70;
+      var k = Math.min((w - pad * 2) / Math.max(1, x1 - x0), (h - pad * 2) / Math.max(1, y1 - y0));
+      k = Math.max(0.06, Math.min(2.5, k));
+      this.view.k = k;
+      this.view.x = w / 2 - ((x0 + x1) / 2) * k;
+      this.view.y = h / 2 - ((y0 + y1) / 2) * k;
+      this.updateHud();
+    },
+    radius: function (nd) { return 5 + Math.sqrt(nd.deg || 0) * 2.6; },
+    draw: function () {
+      if (!this.built || !this.ctx) return;
+      var c = this.canvas, ctx = this.ctx;
+      this.dpr = Math.min(2, window.devicePixelRatio || 1);
+      var w = c.clientWidth, h = c.clientHeight;
+      if (!w || !h) return;
+      if (c.width !== Math.round(w * this.dpr) || c.height !== Math.round(h * this.dpr)) {
+        c.width = Math.round(w * this.dpr); c.height = Math.round(h * this.dpr);
+      }
+      ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      var v = this.view;
+      var wx0 = -v.x / v.k - 60, wy0 = -v.y / v.k - 60;
+      var wx1 = (w - v.x) / v.k + 60, wy1 = (h - v.y) / v.k + 60;
+      // 縁とノードはワールド座標で描くので、パン・ズームを canvas 側の変換に載せる
+      ctx.setTransform(this.dpr * v.k, 0, 0, this.dpr * v.k, this.dpr * v.x, this.dpr * v.y);
+      var self = this;
+      var focus = this.focusSet;
+      var i;
+      // --- 縁: 全部描くと10k規模でコマ落ちするので、次数順に上限まで描く。
+      //     選択中・フォーカスに関わる縁は必ず描き、省略本数は HUD に出す（黙って落とさない） ---
+      var edges = this.sim.edges;
+      var budget = edges.length > 12000 ? 3000 : edges.length > 5000 ? 8000 : edges.length;
+      var painted = 0, skipped = 0;
+      function paintEdge(e) {
+        var a = self.pos.get(e.source), b = self.pos.get(e.target);
+        if (!a || !b) return false;
+        if (Math.max(a.x, b.x) < wx0 || Math.min(a.x, b.x) > wx1 || Math.max(a.y, b.y) < wy0 || Math.min(a.y, b.y) > wy1) return false;
+        ctx.globalAlpha = focus ? 0.8 : (e.provenance === "llm" || e.provenance === "human" ? 0.75 : 0.55);
+        ctx.strokeStyle = EDGE_COLOR[e.kind] || "#4d5866";
+        if (e.provenance === "llm" || e.provenance === "human") ctx.setLineDash([6 / v.k, 4 / v.k]);
+        else ctx.setLineDash([]);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+        return true;
+      }
+      ctx.lineWidth = Math.max(0.6, 1.2 / v.k);
+      var hot = null;
+      if (focus || state.selected) {
+        hot = [];
+        for (var hi = 0; hi < edges.length; hi++) {
+          var he = edges[hi];
+          if (he.source === state.selected || he.target === state.selected ||
+              (focus && (focus.has(he.source) || focus.has(he.target)))) hot.push(he);
+        }
+      }
+      var order = focus ? edges : (this.sortedEdges || edges);
+      for (i = 0; i < order.length; i++) {
+        var e = order[i];
+        if (hot && hot.indexOf(e) >= 0) continue;
+        if (focus && !(focus.has(e.source) && focus.has(e.target))) continue;
+        if (painted >= budget) { skipped++; continue; }
+        if (paintEdge(e)) painted++;
+      }
+      if (hot) { for (i = 0; i < hot.length; i++) if (paintEdge(hot[i])) painted++; }
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      this.skippedEdges = skipped;
+      var bucket = Math.round(skipped / 500);
+      if (bucket !== this.shownSkipBucket) { this.shownSkipBucket = bucket; this.updateHud(); }
+      // --- ノード ---
+      var ns = this.sim.nodes;
+      var byId = state.byId;
+      for (i = 0; i < ns.length; i++) {
+        var nd = ns[i];
+        if (nd.x < wx0 || nd.x > wx1 || nd.y < wy0 || nd.y > wy1) continue;
+        var r = this.radius(nd);
+        var dimN = focus && !focus.has(nd.id);
+        ctx.globalAlpha = dimN ? 0.12 : 1;
+        ctx.beginPath();
+        ctx.arc(nd.x, nd.y, r, 0, 6.283185);
+        ctx.fillStyle = KIND_COLOR[nd.kind] || "#8b949e";
+        ctx.fill();
+        var n0 = byId.get(nd.id);
+        if (n0 && n0.metadata && n0.metadata.candidate === true) {
+          ctx.lineWidth = 1.4 / v.k;
+          ctx.strokeStyle = "#d29922";
+          ctx.setLineDash([3 / v.k, 3 / v.k]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+        if (nd.id === state.selected) {
+          ctx.globalAlpha = 1;
+          ctx.lineWidth = 2.4 / v.k;
+          ctx.strokeStyle = "#f0f6fc";
+          ctx.stroke();
+        }
+      }
+      ctx.globalAlpha = 1;
+      // --- ラベル: 画面内 + (十分に拡大) または 次数上位。打ち切りあり ---
+      //     ラベルは画面空間で打つ（拡大しても文字が巨大にならない）
+      ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      var cap = 180, drawn = 0;
+      ctx.font = "11px -apple-system, 'Hiragino Sans', sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "top";
+      var placed = []; // 重なったラベルは描かない（密集したグラフでも読めるように）
+      for (i = 0; i < ns.length && drawn < cap; i++) {
+        var m = ns[i];
+        if (focus && !focus.has(m.id)) continue;
+        var sx = m.x * v.k + v.x, sy = m.y * v.k + v.y;
+        if (sx < -60 || sx > w + 60 || sy < -20 || sy > h + 20) continue;
+        var rr = this.radius(m) * v.k;
+        if (rr < 7 && !this.topIds.has(m.id) && m.id !== state.selected) continue;
+        var node = byId.get(m.id);
+        if (!node) continue;
+        drawn++;
+        var label = node.name.length > 22 ? node.name.slice(0, 21) + "…" : node.name;
+        var lw = label.length * 6.6, lh = 13;
+        var lx = sx - lw / 2, ly = sy + rr + 3;
+        var clash = false;
+        if (m.id !== state.selected) {
+          for (var pi = 0; pi < placed.length; pi++) {
+            var q = placed[pi];
+            if (lx < q.x + q.w + 4 && lx + lw + 4 > q.x && ly < q.y + q.h + 2 && ly + lh + 2 > q.y) { clash = true; break; }
+          }
+        }
+        if (clash) continue;
+        placed.push({ x: lx, y: ly, w: lw, h: lh });
+        ctx.strokeStyle = "rgba(8,12,18,.85)";
+        ctx.strokeText(label, sx, sy + rr + 3);
+        ctx.fillStyle = m.id === state.selected ? "#f0f6fc" : "#c7d2de";
+        ctx.fillText(label, sx, sy + rr + 3);
+      }
+    },
+    updateHud: function () {
+      if (!this.hudZoom) return;
+      this.hudZoom.textContent = "ズーム " + Math.round(this.view.k * 100) + "%" +
+        (this.skippedEdges ? "・縁 " + this.skippedEdges.toLocaleString() + " 本は次数下位で未描画" : "");
+      this.hudFocus.textContent = this.focusSet
+        ? "フォーカス: " + this.focusSet.size + " ノード（⇧クリックで解除）"
+        : "";
+      this.hudFocus.classList.toggle("on", !!this.focusSet);
+    },
+    screenToWorld: function (ev) {
+      var rect = this.canvas.getBoundingClientRect();
+      return {
+        x: (ev.clientX - rect.left - this.view.x) / this.view.k,
+        y: (ev.clientY - rect.top - this.view.y) / this.view.k,
+      };
+    },
+    hit: function (wx, wy) {
+      var ns = this.sim.nodes, best = null, bestD = Infinity;
+      for (var i = 0; i < ns.length; i++) {
+        var nd = ns[i];
+        var r = this.radius(nd) + 6 / this.view.k;
+        var dx = nd.x - wx, dy = nd.y - wy;
+        var d = dx * dx + dy * dy;
+        if (d <= r * r && d < bestD) { bestD = d; best = nd; }
+      }
+      return best;
+    },
+    toggleFocus: function (id) {
+      if (this.focusSet && this.focusSet.has(id) && this.focusId === id) {
+        this.focusSet = null;
+        this.focusId = null;
+        this.userMoved = false;
+        this.fit();
+      } else {
+        this.focusSet = neighborhood(id, 2);
+        this.focusId = id;
+        this.userMoved = true;
+        this.fit();
+      }
+      this.updateHud();
+      this.requestDraw();
+    },
+    bindEvents: function () {
+      var self = this;
+      var c = this.canvas;
+      var down = null, moved = false;
+      c.addEventListener("wheel", function (e) {
+        e.preventDefault();
+        var rect = c.getBoundingClientRect();
+        var mx = e.clientX - rect.left, my = e.clientY - rect.top;
+        var f = Math.exp(-(e.deltaY || 0) * 0.0016);
+        var k = Math.max(0.05, Math.min(8, self.view.k * f));
+        self.view.x = mx - (mx - self.view.x) * (k / self.view.k);
+        self.view.y = my - (my - self.view.y) * (k / self.view.k);
+        self.view.k = k;
+        self.userMoved = true;
+        self.updateHud();
+        self.requestDraw();
+      }, { passive: false });
+      c.addEventListener("mousedown", function (e) {
+        down = { x: e.clientX, y: e.clientY, vx: self.view.x, vy: self.view.y };
+        moved = false;
+        c.classList.add("dragging");
+      });
+      window.addEventListener("mousemove", function (e) {
+        if (!down) return;
+        var dx = e.clientX - down.x, dy = e.clientY - down.y;
+        if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+        if (moved) {
+          self.view.x = down.vx + dx;
+          self.view.y = down.vy + dy;
+          self.userMoved = true;
+          self.requestDraw();
+        }
+      });
+      window.addEventListener("mouseup", function (e) {
+        if (!down) return;
+        c.classList.remove("dragging");
+        var wasMoved = moved;
+        down = null;
+        moved = false;
+        if (wasMoved) return;
+        if (!self.canvas.contains(e.target) && e.target !== self.canvas) return;
+        var w = self.screenToWorld(e);
+        var hit = self.hit(w.x, w.y);
+        if (!hit) {
+          // 何もないところを ⇧クリックしても解除できる（⇧クリックの意味を揃える）
+          if (e.shiftKey && self.focusSet) {
+            self.focusSet = null;
+            self.focusId = null;
+            self.userMoved = false;
+            self.fit();
+            self.updateHud();
+            self.requestDraw();
+          }
+          return;
+        }
+        if (e.shiftKey) self.toggleFocus(hit.id);
+        else selectNode(hit.id);
+      });
+      c.addEventListener("dblclick", function () { self.userMoved = false; self.fit(); self.requestDraw(); });
+    },
+  };
+  var KIND_COLOR = { flow: "#3fb950", step: "#58a6ff", store: "#f0883e", boundary: "#bc8cff", code: "#8b949e" };
+  // n ホップ到達集合（フォーカス用）
+  function neighborhood(id, hops) {
+    var seen = new Set([id]);
+    var frontier = [id];
+    for (var h = 0; h < hops; h++) {
+      var next = [];
+      frontier.forEach(function (cur) {
+        (state.out.get(cur) || []).forEach(function (e) {
+          if (state.vis.nodeSet.has(e.target) && !seen.has(e.target)) { seen.add(e.target); next.push(e.target); }
+        });
+        (state.in.get(cur) || []).forEach(function (e) {
+          if (state.vis.nodeSet.has(e.source) && !seen.has(e.source)) { seen.add(e.source); next.push(e.source); }
+        });
+      });
+      frontier = next;
+    }
+    return seen;
+  }
+
+  // ==========================================================
+  //  タブ 3: データ格納先（store / boundary 一覧）
+  // ==========================================================
+  function storageRows() {
+    var rows = state.vis.nodes.filter(function (n) { return n.kind === "store" || n.kind === "boundary"; })
+      .map(function (n) {
+        var readers = [], writers = [], codeRefs = 0;
+        insOf(n.id).forEach(function (e) {
+          if (e.kind !== "reads" && e.kind !== "writes") return;
+          var s = state.byId.get(e.source);
+          if (!s || (s.kind !== "step" && s.kind !== "boundary")) return;
+          (e.kind === "reads" ? readers : writers).push({ node: s, edge: e });
+        });
+        outsOf(n.id).forEach(function (e) {
+          if (e.kind !== "reads" && e.kind !== "writes") return;
+          var t = state.byId.get(e.target);
+          if (!t || (t.kind !== "store" && t.kind !== "boundary")) return;
+          (e.kind === "reads" ? readers : writers).push({ node: t, edge: e });
+        });
+        codeRefs = evidenceOf(n).length;
+        return {
+          node: n, readers: readers, writers: writers, codeRefs: codeRefs,
+          unlinked: isUnlinked(n), provs: nodeProvenances(n.id),
+          subtype: (n.metadata && (n.metadata.storeKind || n.metadata.boundaryKind)) || "-",
+        };
+      });
+    var s = storeView.sort;
+    var dir = s.dir;
+    rows.sort(function (a, b) {
+      var av, bv;
+      switch (s.key) {
+        case "kind": av = a.node.kind + a.subtype; bv = b.node.kind + b.subtype; break;
+        case "readers": av = a.readers.length; bv = b.readers.length; break;
+        case "writers": av = a.writers.length; bv = b.writers.length; break;
+        case "code": av = a.codeRefs; bv = b.codeRefs; break;
+        case "cand": av = a.unlinked ? 1 : 0; bv = b.unlinked ? 1 : 0; break;
+        default: av = a.node.name.toLowerCase(); bv = b.node.name.toLowerCase();
+      }
+      if (av < bv) return -1 * dir;
+      if (av > bv) return 1 * dir;
+      return a.node.id < b.node.id ? -1 : 1;
+    });
+    return rows;
+  }
+  var storeView = {
+    root: null, built: false, tbody: null, count: null,
+    sort: { key: "name", dir: 1 }, limit: TABLE_CAP,
+    ensure: function () {
+      if (this.built) return;
+      this.root = $("#view-stores");
+      var self = this;
+      this.count = el("span", { class: "hint" });
+      this.tbody = el("tbody", { id: "store-rows" });
+      var table = el("table", { class: "grid", id: "store-table" },
+        el("thead", {}, el("tr", {},
+          this.th("名前", "name"), this.th("種別", "kind"),
+          this.th("読み取り元", "readers"), this.th("書き込み先", "writers"),
+          this.th("コード根拠数", "code"), this.th("未紐づけ", "cand"),
+          el("th", {}, "出所"))),
+        this.tbody);
+      var more = el("button", { class: "btn small", id: "store-more", onclick: function () {
+        self.limit += TABLE_CAP; self.render();
+      } }, "さらに表示");
+      this.root.appendChild(el("div", { class: "legend" },
+        el("span", {}, "格納先と境界の一覧。行をクリックで詳細。列名で並べ替え。"), this.count));
+      this.root.appendChild(table);
+      this.root.appendChild(more);
+      this.more = more;
+      this.built = true;
+    },
+    th: function (label, key) {
+      var self = this;
+      return el("th", {
+        class: "sortable", dataset: { sortkey: key },
+        onclick: function () {
+          if (self.sort.key === key) self.sort.dir = -self.sort.dir;
+          else { self.sort.key = key; self.sort.dir = 1; }
+          self.render();
+        },
+      }, label, this.sort.key === key ? el("span", { class: "arrow" }, this.sort.dir > 0 ? " ▲" : " ▼") : null);
+    },
+    render: function () {
+      if (!this.built) return;
+      var rows = storageRows();
+      var head = this.root.querySelector("thead tr");
+      clear(head);
+      [["名前", "name"], ["種別", "kind"], ["読み取り元", "readers"], ["書き込み先", "writers"],
+        ["コード根拠数", "code"], ["未紐づけ", "cand"]].forEach((function (p) {
+        head.appendChild(this.th(p[0], p[1]));
+      }).bind(this));
+      head.appendChild(el("th", {}, "出所"));
+      clear(this.tbody);
+      var shown = rows.slice(0, this.limit);
+      shown.forEach(function (r) {
+        var tr = el("tr", { dataset: { node: r.node.id, kind: r.node.kind },
+          onclick: function () { selectNode(r.node.id); } },
+          el("td", {}, el("b", {}, r.node.name), el("div", { class: "sr-id" }, r.node.id)),
+          el("td", {}, el("span", { class: "kind-label", dataset: { kind: r.node.kind } },
+            el("span", { class: "kind-dot" }), " ", KIND_LABEL[r.node.kind]),
+          el("div", { class: "dim" }, r.subtype)),
+          el("td", { class: "cell-names" }, r.readers.length
+            ? r.readers.map(function (x) { return el("span", { class: "n" }, nodeLink(x.node.id), el("span", { class: "dim" }, " (" + x.edge.kind + ")")); })
+            : el("span", { class: "dim" }, "—")),
+          el("td", { class: "cell-names" }, r.writers.length
+            ? r.writers.map(function (x) { return el("span", { class: "n" }, nodeLink(x.node.id), el("span", { class: "dim" }, " (" + x.edge.kind + ")")); })
+            : el("span", { class: "dim" }, "—")),
+          el("td", {}, String(r.codeRefs)),
+          el("td", {}, r.unlinked ? el("span", { class: "badge cand" }, "未紐づけ") : el("span", { class: "dim" }, "—")),
+          el("td", {}, r.provs.map(provChip)));
+        this.tbody.appendChild(tr);
+      }, this);
+      this.count.textContent = rows.length + " 件（表示 " + shown.length + "）";
+      this.more.style.display = rows.length > this.limit ? "" : "none";
+      markSelectedInViews();
+    },
+  };
+
+  // ==========================================================
+  //  タブ 4: I/O 一覧（ステップ 1 行）
+  // ==========================================================
+  var ioView = {
+    root: null, built: false, tbody: null, count: null, limit: TABLE_CAP,
+    ensure: function () {
+      if (this.built) return;
+      this.root = $("#view-io");
+      var self = this;
+      this.count = el("span", { class: "hint" });
+      this.tbody = el("tbody", { id: "io-rows" });
+      this.root.appendChild(el("div", { class: "legend" },
+        el("span", {}, "ステップごとの読み取り / 書き込み / 呼び出し。ノード名クリックで詳細。"), this.count));
+      this.root.appendChild(el("table", { class: "grid", id: "io-table" },
+        el("thead", {}, el("tr", {},
+          el("th", {}, "フロー"), el("th", {}, "順序"), el("th", {}, "ステップ"),
+          el("th", {}, "入力 reads"), el("th", {}, "出力 writes"), el("th", {}, "invokes 境界"),
+          el("th", {}, "実装コード"), el("th", {}, "縁の出所 / 確度"))),
+        this.tbody));
+      this.more = el("button", { class: "btn small", id: "io-more", onclick: function () {
+        self.limit += TABLE_CAP; self.render();
+      } }, "さらに表示");
+      this.root.appendChild(this.more);
+      this.built = true;
+    },
+    render: function () {
+      if (!this.built) return;
+      var rows = [];
+      flows().forEach(function (f) {
+        flowSteps(f).forEach(function (st) { rows.push({ flow: f, st: st }); });
+      });
+      clear(this.tbody);
+      rows.slice(0, this.limit).forEach(function (r) {
+        var n = r.st.node;
+        var groups = { reads: [], writes: [], invokes: [], "implemented-by": [] };
+        outsOf(n.id).forEach(function (e) { if (groups[e.kind]) groups[e.kind].push(e); });
+        var ioCount = groups.reads.length + groups.writes.length + groups.invokes.length;
+        var provs = [];
+        ["reads", "writes", "invokes", "implemented-by"].forEach(function (k) {
+          groups[k].forEach(function (e) {
+            provs.push(el("span", { class: "io-tags" }, provChip(e.provenance),
+              el("span", { class: "er-conf" }, (e.kind === "implemented-by" ? "実装 " : "") + (e.kind === "reads" ? "読 " : e.kind === "writes" ? "書 " : e.kind === "invokes" ? "呼 " : "") + confText(e.confidence).replace("確度 ", ""))));
+          });
+        });
+        var tr = el("tr", { dataset: { node: n.id, kind: "step" }, onclick: function () { selectNode(n.id); } },
+          el("td", {}, nodeLink(r.flow.id, r.flow.name)),
+          el("td", { class: "mono" }, String(r.st.order || "-")),
+          el("td", {}, el("b", {}, n.name), ioCount === 0 ? el("span", { class: "badge empty-io" }, "未記入") : null,
+            isUnlinked(n) && ioCount > 0 ? el("span", { class: "badge cand" }, "未紐づけ") : null,
+            el("div", { class: "sr-id" }, n.id)),
+          el("td", { class: "cell-names" }, groups.reads.length
+            ? groups.reads.map(function (e) { return el("span", { class: "n" }, nodeLink(e.target)); })
+            : el("span", { class: "dim" }, "—")),
+          el("td", { class: "cell-names" }, groups.writes.length
+            ? groups.writes.map(function (e) { return el("span", { class: "n" }, nodeLink(e.target)); })
+            : el("span", { class: "dim" }, "—")),
+          el("td", { class: "cell-names" }, groups.invokes.length
+            ? groups.invokes.map(function (e) { return el("span", { class: "n" }, nodeLink(e.target)); })
+            : el("span", { class: "dim" }, "—")),
+          el("td", { class: "cell-names" }, groups["implemented-by"].length
+            ? groups["implemented-by"].map(function (e) { return el("span", { class: "n" }, nodeLink(e.target)); })
+            : el("span", { class: "dim" }, "—")),
+          el("td", {}, provs.length ? provs : el("span", { class: "dim" }, "—")));
+        this.tbody.appendChild(tr);
+      }, this);
+      this.count.textContent = "ステップ " + rows.length + " 行（表示 " + Math.min(rows.length, this.limit) + "）";
+      this.more.style.display = rows.length > this.limit ? "" : "none";
+      markSelectedInViews();
+    },
+  };
+
+  // ==========================================================
+  //  タブ 5: コード（code ノードと signals）
+  // ==========================================================
+  var codeView = {
+    root: null, built: false, list: null, count: null, expanded: new Set(), limit: TABLE_CAP,
+    ensure: function () {
+      if (this.built) return;
+      this.root = $("#view-code");
+      var self = this;
+      this.count = el("span", { class: "hint" });
+      this.list = el("div", { id: "code-list" });
+      this.root.appendChild(el("div", { class: "legend" },
+        el("span", {}, "スキャンが拾ったコード。展開すると行ごとのシグナル。ref が決まらないものは「要原文確認」。"),
+        el("button", { class: "btn small", onclick: function () {
+          var open = self.expanded.size > 0;
+          self.expanded = new Set();
+          if (!open) self.list.querySelectorAll("[data-node]").forEach(function (d) { self.expanded.add(d.dataset.node); });
+          self.render();
+        } }, "すべて展開 / 閉じる"),
+        this.count));
+      this.root.appendChild(this.list);
+      this.more = el("button", { class: "btn small", id: "code-more", onclick: function () {
+        self.limit += TABLE_CAP; self.render();
+      } }, "さらに表示");
+      this.root.appendChild(this.more);
+      this.built = true;
+    },
+    expand: function (id) {
+      this.expanded.add(id);
+      if (state.view !== "code") setView("code", true);
+      this.render();
+      var box = this.root.querySelector('[data-code="' + cssEscape(id) + '"]');
+      if (box) box.scrollIntoView({ block: "center" });
+    },
+    render: function () {
+      if (!this.built) return;
+      var self = this;
+      var nodes = state.vis.nodes.filter(function (n) { return n.kind === "code"; })
+        .sort(function (a, b) { return a.id < b.id ? -1 : a.id > b.id ? 1 : 0; });
+      clear(this.list);
+      nodes.slice(0, this.limit).forEach(function (n) {
+        var sigs = codeSignals(n);
+        var open = self.expanded.has(n.id);
+        var impl = insOf(n.id).filter(function (e) { return e.kind === "implemented-by"; });
+        var item = el("div", { class: "code-item", dataset: { code: n.id } },
+          el("div", { class: "code-head", onclick: function () {
+            if (self.expanded.has(n.id)) self.expanded.delete(n.id); else self.expanded.add(n.id);
+            self.render();
+          } },
+            el("span", { class: "dim" }, open ? "▾" : "▸"),
+            el("span", { class: "kind-label", dataset: { kind: "code" } }, el("span", { class: "kind-dot" }), " code"),
+            el("span", { class: "path linkish", title: "詳細パネルを開く", onclick: function (ev) { ev.stopPropagation(); selectNode(n.id); } }, n.name),
+            n.metadata && n.metadata.lang ? el("span", { class: "badge" }, n.metadata.lang) : null,
+            el("span", { class: "badge" }, "signals " + sigs.length),
+            impl.length ? el("span", { class: "badge", title: impl.map(function (e) { return (state.byId.get(e.source) || {}).name; }).join(", ") },
+              "実装: " + impl.map(function (e) { return (state.byId.get(e.source) || {}).name; }).join(", ")) : null,
+            nodeProvenances(n.id).map(provChip)),
+          open ? self.signalTable(n, sigs) : null);
+        self.list.appendChild(item);
+      });
+      this.count.textContent = "コード " + nodes.length + " 件（表示 " + Math.min(nodes.length, this.limit) + "）";
+      this.more.style.display = nodes.length > this.limit ? "" : "none";
+    },
+    signalTable: function (n, sigs) {
+      var self = this;
+      var tb = el("tbody");
+      sigs.forEach(function (s) {
+        var edge = s.ref ? self.edgeForSignal(n, s) : null;
+        var tr = el("tr", { dataset: { line: String(s.line), signal: String(s.signal) } },
+          el("td", { class: "line" }, String(s.line != null ? s.line : "-")),
+          el("td", { class: "sig" }, s.signal || ""),
+          el("td", {}, s.ref ? nodeLink(refId(s.ref), s.ref) : el("span", { class: "badge nullref" }, "要原文確認")),
+          el("td", {
+            class: "snip", title: "クリックで " + (edge ? "該当縁を詳細パネルに開く" : "抜粋を詳細パネルに開く"),
+            onclick: function () { openEvidence(n, s, edge); },
+          }, s.snippet || ""));
+        if (state.detailEvidence && state.detailEvidence.nodeId === n.id &&
+            state.detailEvidence.signal === s.signal && state.detailEvidence.line === s.line) tr.classList.add("hl");
+        tb.appendChild(tr);
+      });
+      return el("div", { class: "code-body" }, el("table", { class: "signals" },
+        el("thead", {}, el("tr", {}, el("th", {}, "行"), el("th", {}, "signal"), el("th", {}, "ref"), el("th", {}, "抜粋"))),
+        tb));
+    },
+    edgeForSignal: function (n, s) {
+      var id = refId(s.ref);
+      if (!id) return null;
+      var found = null;
+      (state.out.get(n.id) || []).forEach(function (e) {
+        if (found || e.target !== id) return;
+        found = e;
+      });
+      return found;
+    },
+  };
+  // scan の signals[].ref（"<kind>/<path>"）から graph のノード ID を作る
+  function refId(ref) {
+    if (typeof ref !== "string") return null;
+    var slash = ref.indexOf("/");
+    if (slash <= 0) return null;
+    var sub = normSeg(ref.slice(0, slash));
+    var side = (sub === "http" || sub === "lambda" || sub === "sfn" || sub === "grpc" || sub === "cli") ? "boundary" : "store";
+    if (side === "boundary" && BOUNDARY_KINDS.indexOf(sub) < 0) return null;
+    if (side === "store" && STORE_KINDS.indexOf(sub) < 0) return null;
+    var path = ref.slice(slash + 1).split("/").map(normSeg).filter(Boolean).join("/");
+    if (!path) return null;
+    return side + ":" + sub + "/" + path;
+  }
+  function openEvidence(node, ev, edge) {
+    state.selected = edge ? edge.source : node.id;
+    state.detailEdge = edge || null;
+    state.detailEvidence = { nodeId: node.id, signal: ev.signal, line: ev.line, path: ev.path || node.name, snippet: ev.snippet };
+    writeHash();
+    renderDetail();
+    if (state.view === "code") codeView.render();
+    if (state.view === "graph") graphView.requestDraw();
+  }
+  function jumpToCode(path, line, signal) {
+    var id = "code:" + path;
+    if (!state.byId.has(id)) { toast("コードノードが見つかりません: " + id); return; }
+    state.selected = id;
+    state.detailEdge = null;
+    state.detailEvidence = { nodeId: id, path: path, line: line, signal: signal };
+    setView("code", true);
+    codeView.expand(id);
+    writeHash();
+    renderDetail();
+  }
+
+  // ==========================================================
+  //  詳細パネル
+  // ==========================================================
+  function renderDetail() {
+    var host = clear($("#detail-panel"));
+    var n = state.selected ? state.byId.get(state.selected) : null;
+    if (!n) { host.appendChild(summaryBlock()); return; }
+
+    var md = n.metadata || {};
+    var head = el("div", { class: "dt-head" },
+      el("div", { style: "flex:1 1 auto; min-width:0" },
+        el("div", { class: "dt-name" }, n.name),
+        el("div", { class: "dt-id" }, n.id)),
+      el("button", { class: "btn small", title: "ID をコピー", onclick: function () { copyText(n.id, "ID をコピーしました"); } }, "ID"),
+      el("button", { class: "btn small", title: "このノードを URL で共有", onclick: function () {
+        copyText(shareUrl(), "このノードの URL をコピーしました");
+      } }, "URL 共有"));
+    host.appendChild(head);
+    host.appendChild(el("div", { style: "display:flex; gap:5px; flex-wrap:wrap; margin-top:6px" },
+      kindTag(n),
+      md.storeKind ? el("span", { class: "badge" }, "store: " + md.storeKind) : null,
+      md.boundaryKind ? el("span", { class: "badge" }, "boundary: " + md.boundaryKind) : null,
+      el("span", { class: "badge" }, "出所: " + provLabel(nodeProvenance(n))),
+      stepIoCount(n.id) === 0 && n.kind === "step" ? el("span", { class: "badge empty-io" }, "未記入") : null,
+      isUnlinked(n) && n.kind !== "step" ? el("span", { class: "badge cand" }, "未紐づけ") : null,
+      el("span", { class: "badge" }, "次数 " + (state.degree.get(n.id) || 0))));
+    if (n.parent) {
+      host.appendChild(el("div", { class: "hint", style: "margin-top:5px" }, "親: ", nodeLink(n.parent)));
+    }
+
+    if (state.detailEdge) host.appendChild(detailEdgeBlock(state.detailEdge));
+    if (state.detailEvidence) host.appendChild(detailEvidenceBlock(state.detailEvidence));
+
+    // --- metadata ---
+    host.appendChild(el("div", { class: "sec-title" }, "metadata"));
+    var kv = el("table", { class: "kv", id: "detail-metadata" });
+    var keys = Object.keys(md).filter(function (k) { return k !== "evidence" && k !== "signals"; });
+    if (!keys.length) kv.appendChild(el("tr", {}, el("td", { class: "dim" }, "（なし）")));
+    keys.forEach(function (k) {
+      var v = md[k];
+      kv.appendChild(el("tr", {}, el("td", { class: "k" }, k),
+        el("td", { class: "v" }, typeof v === "object" ? JSON.stringify(v) : String(v))));
+    });
+    var evs = evidenceOf(n);
+    if (evs.length) kv.appendChild(el("tr", {}, el("td", { class: "k" }, "evidence"), el("td", { class: "v" }, evs.length + " 件（下に展開）")));
+    if (n.kind === "code") {
+      var sigs = codeSignals(n);
+      kv.appendChild(el("tr", {}, el("td", { class: "k" }, "signals"), el("td", { class: "v" },
+        sigs.length + " 件 ",
+        el("button", { class: "btn small", onclick: function () { codeView.expand(n.id); } }, "コードタブで開く"))));
+    }
+    host.appendChild(kv);
+
+    // --- 縁 ---
+    host.appendChild(el("div", { class: "sec-title" }, "出力縁（このノード → 相手）"));
+    host.appendChild(edgeSection(outsOf(n.id), "out"));
+    host.appendChild(el("div", { class: "sec-title" }, "入力縁（相手 → このノード）"));
+    host.appendChild(edgeSection(insOf(n.id), "in"));
+
+    // --- evidence ---
+    if (evs.length) {
+      host.appendChild(el("div", { class: "sec-title" }, "コード根拠（evidence）"));
+      var box = el("div");
+      evs.forEach(function (ev) {
+        box.appendChild(el("div", { class: "ev-row" },
+          el("span", { class: "loc", title: "コードタブでこの行を開く", onclick: function () { jumpToCode(ev.path, ev.line, ev.signal); } },
+            ev.path + ":" + ev.line),
+          ev.signal ? el("span", { class: "dim" }, " [" + ev.signal + "]") : null,
+          el("span", { class: "snip" }, ev.snippet || "")));
+      });
+      host.appendChild(box);
+    }
+
+    // --- 注釈フォーム ---
+    host.appendChild(el("div", { class: "sec-title" }, "このノードに注釈を付ける（localStorage に保存 / 出所は人間）"));
+    host.appendChild(formLink(n));
+    host.appendChild(formNewStore(n));
+    host.appendChild(formMeta(n));
+  }
+
+  function detailEdgeBlock(e) {
+    var s = state.byId.get(e.source), t = state.byId.get(e.target);
+    return el("div", { class: "card-panel", style: "margin-top:8px", id: "detail-edge" },
+      el("div", { class: "eg-title" }, el("b", {}, "選択中の縁"), el("span", { class: "dim" }, e.kind),
+        el("button", { class: "btn small ghost", style: "margin-left:auto", onclick: function () {
+          state.detailEdge = null; renderDetail();
+        } }, "閉じる")),
+      el("div", {}, nodeLink(e.source, s ? s.name : e.source), " —" + (EDGE_LABEL[e.kind] || e.kind) + "→ ",
+        nodeLink(e.target, t ? t.name : e.target)),
+      el("div", { style: "margin-top:4px" }, provChip(e.provenance), " ",
+        el("span", { class: "er-conf" }, confText(e.confidence))),
+      e.note ? el("div", { class: "er-note" }, "根拠: " + e.note) : null,
+      ((e.metadata || {}).notesFrom || []).map(function (nf) {
+        return el("div", { class: "er-note" }, provChip(nf.provenance) + " " + (nf.note || ""));
+      }));
+  }
+  function detailEvidenceBlock(d) {
+    return el("div", { class: "card-panel", style: "margin-top:8px", id: "detail-evidence" },
+      el("div", { class: "eg-title" }, el("b", {}, "コード抜粋"),
+        el("button", { class: "btn small ghost", style: "margin-left:auto", onclick: function () {
+          state.detailEvidence = null; renderDetail();
+          if (state.view === "code") codeView.render();
+        } }, "閉じる")),
+      el("div", {}, el("span", { class: "loc", onclick: function () { jumpToCode(d.path, d.line, d.signal); } },
+        d.path + ":" + (d.line != null ? d.line : "?")), d.signal ? el("span", { class: "dim" }, " [" + d.signal + "]") : null),
+      el("span", { class: "snip" }, d.snippet || "（抜粋なし）"));
+  }
+  function edgeSection(edges, dir) {
+    var box = el("div", { id: dir === "out" ? "detail-edges-out" : "detail-edges-in" });
+    if (!edges.length) { box.appendChild(el("div", { class: "hint" }, "（フィルタ後の縁はありません）")); return box; }
+    var groups = new Map();
+    edges.forEach(function (e) {
+      if (!groups.has(e.kind)) groups.set(e.kind, []);
+      groups.get(e.kind).push(e);
+    });
+    Array.from(groups.keys()).sort().forEach(function (kind) {
+      var g = el("div", { class: "edge-group" },
+        el("div", { class: "eg-title" }, el("b", {}, EDGE_LABEL[kind] || kind), el("span", { class: "dim" }, kind + " × " + groups.get(kind).length)));
+      groups.get(kind).forEach(function (e) {
+        var other = dir === "out" ? e.target : e.source;
+        var on = state.byId.get(other);
+        g.appendChild(el("div", {
+          class: "edge-row", title: "縁の詳細を開く",
+          onclick: function () { state.detailEdge = e; state.detailEvidence = null; renderDetail(); },
+        },
+          el("div", { class: "er-top" },
+            el("span", { class: "dim" }, dir === "out" ? "→" : "←"),
+            nodeLink(other, on ? on.name : other),
+            provChip(e.provenance),
+            el("span", { class: "er-conf" }, confText(e.confidence)),
+            e.metadata && e.metadata.access ? el("span", { class: "badge" }, "access: " + e.metadata.access) : null),
+          e.note ? el("div", { class: "er-note" }, "根拠: " + e.note) : null));
+      });
+      box.appendChild(g);
+    });
+    return box;
+  }
+
+  // ---------- 注釈フォーム a) 既存ノードと結ぶ ----------
+  var RELATIONS = ["reads", "writes", "invokes", "implemented-by"];
+  function relationAdvice(fromNode, kind, toNode) {
+    if (!kind || !fromNode) return "";
+    var wantStore = kind === "reads" || kind === "writes";
+    var wantBoundary = kind === "invokes";
+    var wantCode = kind === "implemented-by";
+    var okSource = fromNode.kind === "step" || fromNode.kind === "boundary";
+    if (!okSource) return "推奨外: 出るのは " + (kind === "implemented-by" ? "step" : "step / boundary") + " が普通（このノードは " + fromNode.kind + "）";
+    if (wantStore && (!toNode || toNode.kind !== "store")) return "推奨外: reads / writes の先は store（今は " + (toNode ? toNode.kind : "未選択") + "）";
+    if (wantBoundary && (!toNode || toNode.kind !== "boundary")) return "推奨外: invokes の先は boundary（今は " + (toNode ? toNode.kind : "未選択") + "）";
+    if (wantCode && (!toNode || toNode.kind !== "code")) return "推奨外: implemented-by の先は code（今は " + (toNode ? toNode.kind : "未選択") + "）";
+    return "";
+  }
+  function annFields(extra) {
+    var conf = el("input", { type: "number", min: "0", max: "1", step: "0.05", value: "0.9", id: extra + "-conf", title: "確度 0〜1" });
+    var note = el("input", { type: "text", id: extra + "-note", placeholder: "根拠（ファイル:行・関数名・ドキュメント名）" });
+    return { conf: conf, note: note };
+  }
+  function readConf(fields, dflt) {
+    var v = parseFloat(fields.conf.value);
+    if (isNaN(v)) return dflt;
+    return Math.max(0, Math.min(1, v));
+  }
+  function formLink(n) {
+    var picked = { id: null };
+    var conf = el("input", { type: "text", id: "ann-target", placeholder: "相手のノードを検索（名前 / ID）", autocomplete: "off" });
+    var pick = el("div", { class: "ann-pick", id: "ann-pick" });
+    var rel = el("select", { id: "ann-relation" }, RELATIONS.map(function (k) {
+      return el("option", { value: k, text: (EDGE_LABEL[k] || k) + "（" + k + "）" });
+    }));
+    var advice = el("div", { class: "warn-out", id: "ann-advice" });
+    var fields = annFields("ann-link");
+    function refreshAdvice() {
+      advice.textContent = relationAdvice(n, rel.value, picked.id ? state.byId.get(picked.id) : null);
+    }
+    rel.addEventListener("change", refreshAdvice);
+    conf.addEventListener("input", function () {
+      var q = conf.value.trim().toLowerCase();
+      clear(pick);
+      if (!q) { pick.classList.remove("open"); return; }
+      var hits = state.graph.nodes.filter(function (m) {
+        return m.id !== n.id && (m.name.toLowerCase().indexOf(q) >= 0 || m.id.toLowerCase().indexOf(q) >= 0);
+      }).slice(0, 20);
+      if (!hits.length) { pick.classList.add("open"); pick.appendChild(el("div", { class: "dim" }, "該当なし")); return; }
+      pick.classList.add("open");
+      hits.forEach(function (m) {
+        pick.appendChild(el("div", { onclick: function () {
+          picked.id = m.id;
+          conf.value = m.name;
+          pick.classList.remove("open");
+          refreshAdvice();
+        } }, KIND_LABEL[m.kind] + " " + m.name + " ", el("span", { class: "dim mono" }, m.id)));
+      });
+    });
+    var form = el("details", { class: "ann", id: "form-link" },
+      el("summary", {}, "a) 既存ノードと結ぶ"),
+      el("div", {}, el("label", {}, "相手ノード（向きは このノード → 相手 固定）"), conf, pick),
+      el("div", { class: "row" }, rel, fields.conf, fields.note),
+      advice,
+      el("button", { class: "btn primary small", id: "btn-ann-link", onclick: function () {
+        if (!picked.id) { toast("相手ノードを検索して選んでください"); return; }
+        var kind = rel.value;
+        var key = edgeKey({ source: n.id, kind: kind, target: picked.id });
+        if (state.graph.edges.some(function (e) { return edgeKey(e) === key; })) {
+          toast("同じ縁がすでにあります（既存優先で上書きしません）");
+          return;
+        }
+        var edge = { source: n.id, target: picked.id, kind: kind, confidence: readConf(fields, 0.9) };
+        if (fields.note.value.trim()) edge.note = fields.note.value.trim();
+        addAnnEdge(edge);
+        saveAndApply({ edges: [edge] }, "縁を注釈保存しました");
+      } }, "保存"));
+    refreshAdvice();
+    return form;
+  }
+  // ---------- 注釈フォーム b) 新しい格納先 / 境界を後付け ----------
+  function formNewStore(n) {
+    var kind = el("select", { id: "ann-new-kind" },
+      el("option", { value: "store", text: "store（格納先）" }),
+      el("option", { value: "boundary", text: "boundary（境界）" }));
+    var sub = el("select", { id: "ann-new-sub" });
+    function fillSub() {
+      var list = kind.value === "store" ? STORE_KINDS : BOUNDARY_KINDS;
+      clear(sub);
+      list.forEach(function (s) { sub.appendChild(el("option", { value: s, text: s })); });
+    }
+    kind.addEventListener("change", fillSub);
+    fillSub();
+    var name = el("input", { type: "text", id: "ann-new-name", placeholder: "例: payments / reports/weekly.csv" });
+    var rel = el("select", { id: "ann-new-rel" },
+      ["reads", "writes", "invokes"].map(function (k) { return el("option", { value: k, text: (EDGE_LABEL[k] || k) + "（" + k + "）" }); }));
+    var advice = el("div", { class: "warn-out", id: "ann-new-advice" });
+    var fields = annFields("ann-new");
+    function refreshAdvice() { advice.textContent = relationAdvice(n, rel.value, { kind: kind.value }); }
+    rel.addEventListener("change", refreshAdvice);
+    return el("details", { class: "ann", id: "form-new" },
+      el("summary", {}, "b) 新しい格納先 / 境界を後付け"),
+      el("div", { class: "hint" }, "注釈で作れるのは store / boundary だけ（docs/schema.md）。ID は " +
+        "store:<種別>/<正規化パス> に自動で寄せます。"),
+      el("div", { class: "row" }, kind, sub, name),
+      el("div", { class: "row" }, rel, fields.conf, fields.note),
+      advice,
+      el("button", { class: "btn primary small", id: "btn-ann-new", onclick: function () {
+        var side = kind.value, subv = sub.value, raw = name.value.trim();
+        if (!raw) { toast("名前を入力してください"); return; }
+        var path = raw.split("/").map(normSeg).filter(Boolean).join("/");
+        if (!path) { toast("ID に使える名前がありません"); return; }
+        var id = side + ":" + subv + "/" + path;
+        var meta = {};
+        meta[side === "store" ? "storeKind" : "boundaryKind"] = subv;
+        if (fields.note.value.trim()) meta.note = fields.note.value.trim();
+        var annNode = { id: id, kind: side, name: raw, metadata: meta };
+        var relKind = rel.value;
+        if (side === "boundary" && relKind !== "invokes") relKind = "invokes";
+        if (side === "store" && relKind === "invokes") relKind = "writes";
+        var edge = { source: n.id, target: id, kind: relKind, confidence: readConf(fields, 0.8) };
+        if (fields.note.value.trim()) edge.note = fields.note.value.trim();
+        var existed = state.byId.has(id);
+        addAnnNode(annNode);
+        addAnnEdge(edge);
+        saveAndApply({ nodes: [annNode], edges: [edge] },
+          existed ? "既存ノード " + id + " に寄せ、縁だけ追加しました" : "ノード " + id + " を追加しました");
+      } }, "保存"));
+  }
+  // ---------- 注釈フォーム c) メタデータ ----------
+  function formMeta(n) {
+    var k = el("input", { type: "text", id: "meta-key", placeholder: "key（例: owner / reviewed_at）" });
+    var v = el("input", { type: "text", id: "meta-value", placeholder: "value（例: orders-team）" });
+    return el("details", { class: "ann", id: "form-meta" },
+      el("summary", {}, "c) メタデータをこのノードへ"),
+      el("div", { class: "row" }, k, v),
+      el("div", { class: "hint" }, "既存の key とぶつかる場合は既存の値を残します（上書きしません）。"),
+      el("button", { class: "btn primary small", id: "btn-save-meta", onclick: function () {
+        var key = k.value.trim(), val = v.value.trim();
+        if (!key) { toast("key を入れてください"); return; }
+        if (!val) { toast("value を入れてください"); return; }
+        var match = { kind: n.kind, id: n.id };
+        var set = {};
+        set[key] = val;
+        addAnnMeta(match, set);
+        var existed = (n.metadata || {})[key] !== undefined;
+        saveAndApply({ metadata: [{ match: match, set: set }] },
+          existed ? "既存の " + key + " を残したため表示は変わりません（注釈としては保存）" : "メタデータを保存しました");
+      } }, "保存"));
+  }
+
+  // ---------- ノード未選択時: フロー一覧の統計サマリ ----------
+  function summaryBlock() {
+    var box = el("div", { id: "detail-summary" });
+    box.appendChild(el("div", { class: "dt-name" }, "サマリー"));
+    box.appendChild(el("div", { class: "hint" }, "ノードを選ぶと詳細がここに表示されます（表・カード・グラフのクリックで選択）。"));
+    box.appendChild(el("div", { class: "sec-title" }, "フロー一覧"));
+    var t = el("table", { class: "grid" });
+    t.appendChild(el("thead", {}, el("tr", {},
+      el("th", {}, "フロー"),
+      el("th", { title: "ステップ数" }, "手数"),
+      el("th", { title: "reads / writes / invokes が 0 のステップ" }, "未記"),
+      el("th", { title: "reads 縁" }, "読"),
+      el("th", { title: "writes 縁" }, "書"),
+      el("th", { title: "invokes 縁" }, "呼"),
+      el("th", { title: "未紐づけ候補ノード" }, "候補"))));
+    var tb = el("tbody");
+    flows().forEach(function (f) {
+      var steps = flowSteps(f);
+      var counts = { reads: 0, writes: 0, invokes: 0, empty: 0 };
+      steps.forEach(function (st) {
+        var io = 0;
+        outsOf(st.id).forEach(function (e) {
+          if (e.kind === "reads") { counts.reads++; io++; }
+          else if (e.kind === "writes") { counts.writes++; io++; }
+          else if (e.kind === "invokes") { counts.invokes++; io++; }
+        });
+        if (io === 0) counts.empty++;
+      });
+      var cands = state.vis.nodes.filter(function (m) {
+        return (m.kind === "store" || m.kind === "boundary") && isUnlinked(m);
+      }).length;
+      tb.appendChild(el("tr", { dataset: { node: f.id }, onclick: function () { state.flowId = f.id; selectNode(f.id); } },
+        el("td", {}, el("b", {}, f.name), el("div", { class: "sr-id" }, f.id)),
+        el("td", {}, String(steps.length)),
+        el("td", {}, counts.empty ? el("span", { class: "badge empty-io" }, counts.empty) : el("span", { class: "dim" }, "0")),
+        el("td", {}, String(counts.reads)), el("td", {}, String(counts.writes)), el("td", {}, String(counts.invokes)),
+        el("td", {}, String(cands))));
+    });
+    if (!tb.childNodes.length) tb.appendChild(el("tr", {}, el("td", { class: "dim" }, "フローがありません")));
+    t.appendChild(tb);
+    box.appendChild(t);
+
+    box.appendChild(el("div", { class: "sec-title" }, "内訳"));
+    var byKind = {}, byEdge = {}, byProv = {};
+    state.vis.nodes.forEach(function (n) { byKind[n.kind] = (byKind[n.kind] || 0) + 1; byProv[nodeProvenance(n)] = (byProv[nodeProvenance(n)] || 0) + 1; });
+    state.vis.edges.forEach(function (e) { byEdge[e.kind] = (byEdge[e.kind] || 0) + 1; });
+    var kv = el("table", { class: "kv" });
+    kv.appendChild(el("tr", {}, el("td", { class: "k" }, "ノード種別"),
+      el("td", { class: "v" }, KINDS.filter(function (k) { return byKind[k]; }).map(function (k) { return KIND_LABEL[k] + " " + byKind[k]; }).join(" / ") || "—")));
+    kv.appendChild(el("tr", {}, el("td", { class: "k" }, "出所"),
+      el("td", { class: "v" }, PROV_KINDS.filter(function (p) { return byProv[p]; }).map(function (p) { return PROV_LABEL[p] + " " + byProv[p]; }).join(" / ") || "—")));
+    kv.appendChild(el("tr", {}, el("td", { class: "k" }, "縁"),
+      el("td", { class: "v" }, Object.keys(byEdge).sort().map(function (k) { return k + " " + byEdge[k]; }).join(" / ") || "—")));
+    kv.appendChild(el("tr", {}, el("td", { class: "k" }, "未紐づけ"),
+      el("td", { class: "v" }, String(state.vis.nodes.filter(isUnlinked).length) + " ノード")));
+    box.appendChild(kv);
+
+    if (state.graph.warnings && state.graph.warnings.length) {
+      box.appendChild(el("div", { class: "sec-title" }, "マージ警告"));
+      var w = el("div");
+      state.graph.warnings.forEach(function (m) { w.appendChild(el("div", { class: "ev-row" }, m)); });
+      box.appendChild(w);
+    }
+    return box;
+  }
+
+  // ==========================================================
+  //  起動
+  // ==========================================================
+  var views = { flow: flowView, graph: graphView, stores: storeView, io: ioView, code: codeView };
+  var rawDataJson = "";
+
+  function fatal(msg) {
+    var host = document.getElementById("views");
+    clear(host);
+    host.appendChild(el("div", { id: "fatal" }, "グラフデータを読めません: " + msg));
+  }
+
+  function boot() {
+    var holder = document.getElementById("graph-data");
+    rawDataJson = holder ? String(holder.textContent || "").trim() : "";
+    var graph;
+    try {
+      graph = JSON.parse(rawDataJson);
+    } catch (e) {
+      fatal("JSON パース失敗 — " + e.message);
+      return;
+    }
+    if (typeof graph !== "object" || graph === null) {
+      fatal("render.mjs でデータが埋め込まれていません（node bin/render.mjs ... で生成してください）");
+      return;
+    }
+    state.graph = graph;
+    if (!Array.isArray(state.graph.nodes)) state.graph.nodes = [];
+    if (!Array.isArray(state.graph.edges)) state.graph.edges = [];
+    if (!Array.isArray(state.graph.warnings)) state.graph.warnings = [];
+    state.graph.nodes.forEach(function (n) { if (!n.metadata) n.metadata = {}; });
+    reindex();
+
+    // localStorage の人注釈を反映（既存優先）
+    state.ann = loadAnn();
+    var logs = applyAnnDoc(state.ann);
+    reindex();
+    state.flowId = (flows()[0] || {}).id || null;
+    applyHash();
+
+    // --- ヘッダ / タブのイベント ---
+    Object.keys(views).forEach(function (k) { views[k].ensure(); });
+    Array.prototype.forEach.call(document.querySelectorAll(".tab-btn"), function (b) {
+      b.addEventListener("click", function () { setView(b.dataset.view); });
+    });
+    $("#chip-unlinked").addEventListener("click", function () {
+      state.filters.unlinked = !state.filters.unlinked;
+      refresh();
+    });
+    $("#btn-reset-filter").addEventListener("click", function () {
+      state.filters.kinds = new Set(KINDS);
+      state.filters.provs = new Set(PROV_KINDS);
+      state.filters.unlinked = false;
+      refresh();
+      toast("フィルタを解除しました");
+    });
+    $("#flow-select").addEventListener("change", function (ev) {
+      state.flowId = ev.target.value;
+      writeHash();
+      refresh();
+    });
+    var si = $("#search-input");
+    si.addEventListener("input", function () { runSearch(si.value); });
+    si.addEventListener("focus", function () { if (si.value) runSearch(si.value); });
+    si.addEventListener("keydown", function (ev) {
+      if (ev.key === "Enter") {
+        var first = document.querySelector("#search-results .sr-item");
+        if (first) { selectNode(first.dataset.node); $("#search-results").classList.remove("open"); }
+      } else if (ev.key === "Escape") {
+        $("#search-results").classList.remove("open");
+      }
+    });
+    document.addEventListener("click", function (ev) {
+      if (!ev.target.closest || !ev.target.closest(".search-wrap")) $("#search-results").classList.remove("open");
+    });
+    $("#btn-export").addEventListener("click", exportAnn);
+    $("#btn-clear-ann").addEventListener("click", clearAnn);
+    $("#btn-share").addEventListener("click", function () {
+      var url = shareUrl();
+      this.setAttribute("data-url", url);
+      copyText(url, "共有 URL をコピーしました");
+    });
+    window.addEventListener("hashchange", function () {
+      if (suppressingHash) return;
+      applyHash();
+      refresh();
+      setView(state.view, true);
+      renderDetail();
+    });
+
+    logs = logs || [];
+    logs.forEach(function (l) { console.info("[注釈] " + l); });
+    refresh();
+    setView(state.view, true);
+    writeHash();
+    if (storage.available === false) toast("localStorage を使えないため、注釈はこのページ内に限り保持されます");
+    if (logs.length) console.info("ローカル注釈を " + logs.length + " 件反映しました");
+  }
+
+  // テストと手動確認用の小さなフック（描画ロジックは DOM 経由で検証できる）
+  window.__flowViewer = {
+    state: state,
+    views: views,
+    graphView: graphView,
+    flowView: flowView,
+    setView: setView,
+    selectNode: selectNode,
+    shareUrl: shareUrl,
+  };
+  boot();
+})();
+</script>
+</body>
+</html>
