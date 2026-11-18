@@ -802,7 +802,27 @@ function flowGeomAudit() {
       if (x1 - x0 > 2 && y1 - y0 > 2) cards.push({ node: c.dataset.node || c.className, x0: x0, y0: y0, x1: x1, y1: y1 });
     });
   });
-  return { paths: paths, labels: labels, infos: infos, gws: gws, arrows: arrows, cards: cards };
+  // 行の縦位置（レーン先頭からの相対）と描画層の寸法。
+  // 全展開→全たたみで「戻らないもの」が残っていないことを数える材料にする。
+  const laneBox = fv.lane.getBoundingClientRect();
+  const rows = Array.prototype.filter.call(fv.lane.children,
+    (r) => r.nodeType === 1 && r !== fv.svg && r !== fv.svgLbl).map((r) => {
+    const q = r.getBoundingClientRect();
+    return {
+      key: (r.dataset && r.dataset.row) || String(r.getAttribute("class") || r.tagName),
+      gap: r.classList.contains("lbl-gap"),
+      top: Math.round((q.top - laneBox.top) * 10) / 10,
+      h: Math.round(q.height * 10) / 10,
+    };
+  });
+  const size = {
+    laneH: Math.round(laneBox.height), laneW: Math.round(laneBox.width),
+    scrollH: fv.lane.scrollHeight, scrollW: fv.lane.scrollWidth,
+    svgW: Math.round(fv.svg.getBoundingClientRect().width),
+    svgH: Math.round(fv.svg.getBoundingClientRect().height),
+    gapRows: rows.filter((r) => r.gap).length,
+  };
+  return { paths: paths, labels: labels, infos: infos, gws: gws, arrows: arrows, cards: cards, rows: rows, size: size };
 }
 
 const hitRect = (a, b) => a.x1 > b.x0 + 1 && b.x1 > a.x0 + 1 && a.y1 > b.y0 + 1 && b.y1 > a.y0 + 1;
@@ -904,13 +924,35 @@ function checkFlowGeom(rep, tag) {
     }
   }
   assert.deepEqual(clash, [], tag + ": 縁ラベルがサイドカードに重なっている");
+  // 9) 描画層（#flow-edges）はフロー本文の高さを超えて伸びない。
+  //    absolute 配置の SVG 自身で scrollHeight が膨らむと、一度伸びて縮まらなくなる。
+  assert.ok(rep.size.svgH <= rep.size.laneH + 2,
+    tag + ": 描画層の高さがフロー本文より大きい（" + rep.size.svgH + " > " + rep.size.laneH + "）");
+  assert.ok(rep.size.scrollH <= rep.size.laneH + 2,
+    tag + ": レーンの scrollHeight がフロー本文の高さを超えている（" + rep.size.scrollH + " > " + rep.size.laneH + "）");
+  if (/たたん/.test(tag)) {
+    assert.equal(rep.size.gapRows, 0, tag + ": たたんだ状態で行間広げ（.lbl-gap）が残っている");
+  }
+}
+
+// 行の位置・高さの最大差分（0.1px 刻み）。全展開→全たたみの復元検査で使う
+function maxRowDiff(a, b) {
+  assert.equal(b.length, a.length, "行の数が変わっている: " + a.length + " → " + b.length);
+  let worst = 0, key = "";
+  for (let i = 0; i < a.length; i++) {
+    assert.equal(b[i].key, a[i].key, i + " 件目の行が違う: " + a[i].key + " → " + b[i].key);
+    const d = Math.max(Math.abs(b[i].top - a[i].top), Math.abs(b[i].h - a[i].h));
+    if (d > worst) { worst = d; key = a[i].key; }
+  }
+  return { worst: Math.round(worst * 10) / 10, key: key };
 }
 
 test("分岐縁は下頂点から出てひし形を横切らない（頂点のみ進入・ラベル重なり 0）", async () => {
   await page.evaluate(() => window.__flowViewer.setView("flow"));
   await page.click("#btn-collapse-all");
   await page.waitForTimeout(200);
-  checkFlowGeom(await page.evaluate(flowGeomAudit), "たたんだ状態");
+  const first = await page.evaluate(flowGeomAudit);
+  checkFlowGeom(first, "たたんだ状態");
   await page.screenshot({ path: join(SHOTS, "01g-branch.png") });
   // 展開時はサイドカードがガターに重なるので、同じ検査を通す
   await page.click("#btn-expand-all");
@@ -918,6 +960,14 @@ test("分岐縁は下頂点から出てひし形を横切らない（頂点の�
   checkFlowGeom(await page.evaluate(flowGeomAudit), "全展開");
   await page.screenshot({ path: join(SHOTS, "01h-branch-expanded.png") });
   await page.click("#btn-collapse-all");
+  await page.waitForTimeout(500);
+  // 全展開→全たたみ：行の位置も描画層の高さも展開前の値へ完全に戻ること
+  const back = await page.evaluate(flowGeomAudit);
+  checkFlowGeom(back, "たたみ直し");
+  const rd = maxRowDiff(first.rows, back.rows);
+  assert.equal(rd.worst, 0, "全展開→全たたみ後にデモフローの行が戻っていない（最大 " + rd.worst + "px @" + rd.key + "）");
+  assert.equal(back.size.svgH, first.size.svgH,
+    "全展開→全たたみ後に描画層の高さが戻らない: " + first.size.svgH + " → " + back.size.svgH);
 });
 
 // ラベル無し分岐・同一端点の並行縁・自己ループは実データに無いので合成グラフで検査する
@@ -1216,6 +1266,48 @@ test("合成グラフ: ラベル無し分岐も描く／同一端点の並行縁
   assert.ok(!/access:\s*unknown/.test(detTxt), "metadata.access の unknown を素出ししている");
   assert.deepEqual(errs, [], "合成グラフでコンソールエラー: " + errs.join(" / "));
   await p.screenshot({ path: join(SHOTS, "04-synth-branch.png") });
+  await p.close();
+});
+
+test("全展開→全たたみで行間広げ（.lbl-gap）と描画層の高さが完全に戻る", async () => {
+  const dir = join(OUT, "synth");
+  const json = join(dir, "gap-synth.json");
+  const html = join(dir, "gap-synth.html");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(json, JSON.stringify(synthGraph(), null, 1));
+  const r = spawnSync(process.execPath,
+    [join(ROOT, "bin", "render.mjs"), "--graph", json, "--out", html, "--title", "後片付けの検査"], { encoding: "utf8" });
+  assert.equal(r.status, 0, "合成グラフの描画に失敗: " + r.stderr);
+  const errs = [];
+  const p = await openFile(html, "#view=flow", errs);
+  await p.waitForSelector(".step-box");
+  await waitForEdgesAtLeast(p, 0);
+  await p.click("#btn-collapse-all");
+  await p.waitForTimeout(400);
+  const base = await p.evaluate(flowGeomAudit);
+  assert.equal(base.size.gapRows, 0, "たたんだ状態から行間広げが残っている: "
+    + JSON.stringify(base.rows.filter((r) => r.gap)));
+  await p.click("#btn-expand-all");
+  await p.waitForTimeout(700);
+  const exp = await p.evaluate(flowGeomAudit);
+  assert.ok(exp.size.gapRows > 0, "この合成グラフで行間広げ（.lbl-gap）が発火しない＝後片付けの検査が空振り");
+  assert.ok(exp.size.svgH <= exp.size.laneH + 2,
+    "展開中でも描画層が本文より高い: " + exp.size.svgH + " > " + exp.size.laneH);
+  await p.screenshot({ path: join(SHOTS, "07-lbl-gap-expanded.png") });
+  await p.click("#btn-collapse-all");
+  await p.waitForTimeout(700);
+  const back = await p.evaluate(flowGeomAudit);
+  const d = maxRowDiff(base.rows, back.rows);
+  assert.equal(d.worst, 0,
+    "全展開→全たたみ後に行の位置／高さが戻っていない（最大 " + d.worst + "px @" + d.key + "）");
+  assert.equal(back.size.gapRows, 0,
+    "たたみ直後に .lbl-gap が残っている: " + JSON.stringify(back.rows.filter((r) => r.gap)));
+  assert.equal(back.size.svgH, base.size.svgH,
+    "たたみ直後に描画層の高さが展開前から縮まない: " + base.size.svgH + " → " + back.size.svgH);
+  assert.ok(back.size.scrollH <= back.size.laneH + 2,
+    "たたみ直後にレーンが展開時の高さへ伸びたまま: lane " + back.size.laneH + " / scroll " + back.size.scrollH);
+  assert.deepEqual(errs, [], "コンソールエラー: " + errs.join(" / "));
+  await p.screenshot({ path: join(SHOTS, "07-lbl-gap-restored.png") });
   await p.close();
 });
 
@@ -1659,6 +1751,7 @@ test("ローカル注釈をクリアするとグラフが埋め込みデータ�
   assert.ok(shots.length >= 15, "スクリーンショットが足りない: " + shots.join(", "));
   for (const need of ["01-flow.png", "01b-flow-expanded.png", "01d-loop.png", "01e-gateway.png", "01g-branch.png",
     "01-flow-light.png", "01b-flow-light-expanded.png", "02-graph-light.png", "06-stores-light.png",
+    "07-lbl-gap-expanded.png", "07-lbl-gap-restored.png",
     "07-io-light.png", "08-code-light.png", "02c-graph-arrows.png"]) {
     assert.ok(shots.includes(need), "必須のスクリーンショットが無い: " + need);
   }

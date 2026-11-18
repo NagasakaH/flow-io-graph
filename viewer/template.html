@@ -1395,6 +1395,7 @@ html[data-theme="light"] {
       var self = this;
       this.edgeItems = [];
       this.linkItems = [];
+      this._gapped = false; // 行は作り直すので .lbl-gap も消える
       clear(this.bar); clear(this.lane); clear(this.band);
       this.lane.appendChild(this.svg);
       this.lane.appendChild(this.svgLbl);
@@ -1766,6 +1767,15 @@ html[data-theme="light"] {
     },
     // layout を読むのはここだけ。展開時とリサイズ時に呼ぶ。
     measureEdges: function () {
+      // 行間を広げた跡（.lbl-gap）は毎回買い直す: 素の行順で測り、drawEdges が本当に
+      // 必要な行だけ広げ直すので、折りたたみ後も 30px ずつ残らない。
+      // _gapPass の測り直し中は「広げた結果」を測っているので剥がさない。
+      // _gapped は広げた行がある間だけ true（毎回走らせないための目印）。
+      if (!this._gapPass && this._gapped) {
+        this._gapped = false;
+        var gapped = this.lane.querySelectorAll(".fc-row.lbl-gap");
+        for (var gi = 0; gi < gapped.length; gi++) gapped[gi].classList.remove("lbl-gap");
+      }
       if (!this.built || !this.lane) return;
       var box = this.lane.getBoundingClientRect();
       var sideGap = this.lane.querySelector(".fc-side > *") ? 12 : 30;
@@ -1820,7 +1830,19 @@ var row = sc.closest(".fc-row");
       var svg = this.svg, lbl = this.svgLbl, lane = this.lane;
       clear(svg); clear(lbl);
       var box = this.lane.getBoundingClientRect();
-      var w = Math.max(this.lane.scrollWidth, box.width), h = Math.max(this.lane.scrollHeight, box.height);
+      // レーンの scrollWidth / scrollHeight は absolute 配置のこの SVG 自身でも膨らむ。
+      // その値を SVG の寸法に戻すと、一度伸びた図が二度と縮まない（SVG → scrollHeight → SVG の
+      // 自己参照）。in-flow の行だけを見て寸法を決める。
+      var w = box.width, h = box.height;
+      var kids = lane.children;
+      for (var ki = 0; ki < kids.length; ki++) {
+        var kd = kids[ki];
+        if (kd !== svg && kd !== lbl && kd.nodeType === 1) {
+          var kr = kd.getBoundingClientRect();
+          if (kr.right - box.left > w) w = kr.right - box.left;
+          if (kr.bottom - box.top > h) h = kr.bottom - box.top;
+        }
+      }
       var items = this.edgeItems.concat(this.linkItems);
       [svg, lbl].forEach(function (g) {
         g.setAttribute("width", w);
@@ -1992,6 +2014,7 @@ var row = sc.closest(".fc-row");
         });
         if (gapRows.length) {
           this._gapPass = true;   // 測り直しは 1 度だけ（発散させない）
+          this._gapped = true;    // 次の通常計測で剥がして買い直す目印
           gapRows.forEach(function (r) { r.classList.add("lbl-gap"); });
           this.measureEdges();
           this.drawEdges();
