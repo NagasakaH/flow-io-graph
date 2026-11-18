@@ -803,6 +803,62 @@ function flowGeomAudit() {
       if (x1 - x0 > 2 && y1 - y0 > 2) cards.push({ node: c.dataset.node || c.className, x0: x0, y0: y0, x1: x1, y1: y1 });
     });
   });
+  // 自己ループ: 終端接線（向き）と、終端 4px 手前がカードの輪郭の外に出ているか
+  const self = [];
+  Array.prototype.forEach.call(fv.svg.querySelectorAll("path.edge[data-edge]"), (p) => {
+    const parts = String(p.getAttribute("data-edge") || "").split("|");
+    if (parts.length !== 3 || parts[0] !== parts[2]) return;
+    const L = p.getTotalLength();
+    const e = p.getPointAtLength(L), b = p.getPointAtLength(Math.max(0, L - 4));
+    const A = to(e.x, e.y), C = to(b.x, b.y);
+    const q = fv.lane.querySelector('.step-box[data-node="' + CSS.escape(parts[0]) + '"]');
+    const r = q ? q.getBoundingClientRect() : null;
+    // ひし形は輪郭が外接矩形より内側に引っ込むので、ゲートウェイは輪郭で判定する
+    const d = gws.filter((g) => g.node === parts[0])[0];
+    const inOutline = (pt) => (d ? inside(pt, d)
+      : !!r && pt.x > r.left + 1 && pt.x < r.right - 1 && pt.y > r.top + 1 && pt.y < r.bottom - 1);
+    self.push({
+      key: parts.join("|"), gw: !!(q && q.dataset.gateway === "true"),
+      tan: Number(p.getAttribute("data-tan")), face: p.getAttribute("data-face"),
+      meas: Math.atan2(A.y - C.y, A.x - C.x) * 180 / Math.PI,
+      before4Inside: r ? inOutline(C) : null,
+    });
+  });
+  // API の裏縁（boundary ⇄ store でサブカードに繋がるもの）: 入る辺と終端位置
+  const api = [];
+  Array.prototype.forEach.call(fv.svg.querySelectorAll("path.edge[data-edge]"), (p) => {
+    const parts = String(p.getAttribute("data-edge") || "").split("|");
+    if (parts.length !== 3) return;
+    const aB = parts[0].indexOf("boundary:") === 0, aS = parts[0].indexOf("store:") === 0;
+    const bB = parts[2].indexOf("boundary:") === 0, bS = parts[2].indexOf("store:") === 0;
+    if (!((aB && bS) || (aS && bB))) return;
+    const storeId = aS ? parts[0] : parts[2];
+    const apiId = aB ? parts[0] : parts[2];
+    const e = p.getPointAtLength(p.getTotalLength()), A = to(e.x, e.y);
+    // 図上の向きは reads が 格納先 → API、writes が API → 格納先。終端が届く側のカードを、
+    // 同じ id が複数行に現れてもよいように「終端に最も近い候補」で選ぶ
+    const tgtId = parts[1] === "reads" ? apiId : storeId;
+    const sel = (parts[1] === "reads" ? ".fnode[" : ".sub-card[") + 'data-node="' + CSS.escape(tgtId) + '"]';
+    let q = null, tgtEl = null, best = 1e9;
+    Array.prototype.forEach.call(fv.lane.querySelectorAll(sel), (c) => {
+      const r = c.getBoundingClientRect();
+      const d = Math.min(Math.abs(A.y - r.top), Math.abs(A.y - r.bottom)) +
+        Math.max(0, Math.max(r.left - A.x, A.x - r.right));
+      if (d < best) { best = d; q = r; tgtEl = c; }
+    });
+    if (!tgtEl || best > 40) return;
+    // 同じ列に API のサブカード列がある縁だけを対象にする（＝本当に API の裏を回る縁）
+    const col = tgtEl.closest(".fc-side") || fv.lane;
+    if (!col.querySelector('.sub-wrap[data-under="' + CSS.escape(apiId) + '"]')) return;
+    const q2 = col.querySelector('.fnode[data-node="' + CSS.escape(apiId) + '"]');
+    const r2 = q2 ? q2.getBoundingClientRect() : null;
+    api.push({
+      key: parts.join("|"), face: p.getAttribute("data-face"), route: p.getAttribute("data-route"),
+      dx: r2 ? Math.round(Math.abs((r2.left + r2.right) / 2 - (q.left + q.right) / 2)) : 0,
+      onTopBottom: Math.abs(A.y - q.top) < 3 || Math.abs(A.y - q.bottom) < 3,
+      inXSpan: A.x > q.left - 2 && A.x < q.right + 2,
+    });
+  });
   // 行の縦位置（レーン先頭からの相対）と描画層の寸法。
   // 全展開→全たたみで「戻らないもの」が残っていないことを数える材料にする。
   const laneBox = fv.lane.getBoundingClientRect();
@@ -823,13 +879,46 @@ function flowGeomAudit() {
     svgH: Math.round(fv.svg.getBoundingClientRect().height),
     gapRows: rows.filter((r) => r.gap).length,
   };
-  return { paths: paths, labels: labels, infos: infos, gws: gws, arrows: arrows, cards: cards, rows: rows, size: size };
+  return {
+    paths: paths, labels: labels, infos: infos, gws: gws, arrows: arrows, cards: cards,
+    rows: rows, size: size, self: self, api: api,
+  };
 }
 
 const hitRect = (a, b) => a.x1 > b.x0 + 1 && b.x1 > a.x0 + 1 && a.y1 > b.y0 + 1 && b.y1 > a.y0 + 1;
 const ccw3 = (a, b, c) => (c.y - a.y) * (b.x - a.x) - (b.y - a.y) * (c.x - a.x) > 0;
 const segHit = (a, b, c, d) => ccw3(a, c, d) !== ccw3(b, c, d) && ccw3(a, b, c) !== ccw3(a, b, d);
 const rectCorner = (R, i) => ({ x: i % 2 ? R.x1 : R.x0, y: i < 2 ? R.y0 : R.y1 });
+
+// デモ固有の前提（ゲートウェイ数・縁の本数など）を要らない重なり・終端向きの検査だけ。
+// 合成グラフでも同じ目盛りで見るために切り出した
+function checkClashOnly(rep, tag) {
+  // 8) 縁ラベル（土台 .lbl-bg の実測矩形）は展開中のサイドカード（出所チップ込み）に
+  //    重ならない。概算のベースライン矩形ではなく土台で判定する
+  const clash = [];
+  for (const L of rep.labels) {
+    for (const C of rep.cards) {
+      if (hitRect(L, C)) clash.push(L.text + " × " + C.node);
+    }
+  }
+  assert.deepEqual(clash, [], tag + ": 縁ラベルの土台がサイドカードに重なっている");
+  // 10) API の裏縁は常に上下辺から入る。カード幅の関係で中心が 30px 以上ズレても
+  //     横接続を選んで格納先カードの右（詳細パネル側）へ回り込ませない
+  for (const A of rep.api) {
+    assert.ok(A.face === "up" || A.face === "down", tag +
+      ": API の裏縁が横辺から入っている（中心ズレ " + A.dx + "px・face=" + A.face + "）: " + A.key);
+    assert.ok(A.onTopBottom && A.inXSpan,
+      tag + ": API の裏縁の終端が出入り先のカードの上下辺にない: " + A.key + " face=" + A.face);
+  }
+  // 11) 自己ループの矢じりはカードの外側から入る。終端 4px 手前が輪郭の外、かつ
+  //     終端接線が data-tan（右向き）と食い違わないこと
+  for (const S of rep.self) {
+    assert.ok(angDiff(S.tan, S.meas) <= 10, tag + ": 自己ループの矢じりが進行方向と逆（" + S.key +
+      " data-tan=" + S.tan + " 実測=" + S.meas.toFixed(1) + "）");
+    assert.equal(S.before4Inside, false,
+      tag + ": 自己ループの終端 4px 手前がカードの内側、矢じりが輪郭に埋もれる: " + S.key);
+  }
+}
 
 function checkFlowGeom(rep, tag) {
   assert.equal(rep.gws.length, 2, tag + ": 分岐ノードが 2 つ描画されていない");
@@ -917,14 +1006,7 @@ function checkFlowGeom(rep, tag) {
         tag + ": ▼ の中心 X がステップ列の中心と違う（" + rel + "行との差 " + (A.cx - v).toFixed(1) + "px）");
     }
   }
-  // 8) 縁ラベルは展開中のサイドカード（注釈チップ込み）に重ならない
-  const clash = [];
-  for (const L of rep.labels) {
-    for (const C of rep.cards) {
-      if (hitRect(L, C)) clash.push(L.text + " × " + C.node);
-    }
-  }
-  assert.deepEqual(clash, [], tag + ": 縁ラベルがサイドカードに重なっている");
+  checkClashOnly(rep, tag);
   // 9) 描画層（#flow-edges）はフロー本文の高さを超えて伸びない。
   //    absolute 配置の SVG 自身で scrollHeight が膨らむと、一度伸びて縮まらなくなる。
   assert.ok(rep.size.svgH <= rep.size.laneH + 2,
@@ -970,6 +1052,118 @@ test("分岐縁は下頂点から出てひし形を横切らない（頂点の�
   assert.equal(back.size.svgH, first.size.svgH,
     "全展開→全たたみ後に描画層の高さが戻らない: " + first.size.svgH + " → " + back.size.svgH);
 });
+
+// 左カラムに格納先カードを 5 枚並べ、その上端へ長いループラベルが退避してくる配置。
+// 回避判定が概算矩形のままだと、ラベルの土台がカードの縁（出所チップの上端）に乗る
+function crowdedGraph() {
+  const nodes = [{ id: "flow:crowd", kind: "flow", name: "混雑検査フロー" }];
+  const edges = [{ source: "flow:crowd", target: "flow:crowd", kind: "contains" }];
+  const names = ["取り込み", "入力確認", "補完", "照合", "集約", "再試行判定", "後処理"];
+  names.forEach((nm, i) => {
+    const id = "step:crowd/c" + (i + 1);
+    nodes.push({
+      id: id, kind: "step", parent: "flow:crowd", name: (i + 1) + ". " + nm,
+      metadata: { order: i + 1, provenance: "definition" },
+    });
+    edges.push({ source: "flow:crowd", target: id, kind: "contains" });
+    if (i < names.length - 1) {
+      edges.push({
+        source: id, target: "step:crowd/c" + (i + 2), kind: "next",
+        provenance: "definition", metadata: { order: i + 2 },
+      });
+    }
+  });
+  // ループ元（c7）の左カラムに格納先 5 枚を積む。ループラベルは出る側の行の左通路に
+  // 置かれるので、この列の上端とぶつかる（回避が概算だと土台がカードに乗る）
+  for (let i = 0; i < 5; i++) {
+    nodes.push({
+      id: "store:table/input-" + i, kind: "store", name: "input_" + i,
+      metadata: { storeKind: "table", provenance: "definition" },
+    });
+    edges.push({
+      source: "step:crowd/c7", target: "store:table/input-" + i, kind: "reads",
+      provenance: "definition", metadata: { access: "read" },
+    });
+  }
+  nodes.push({
+    id: "store:table/output-9", kind: "store", name: "output_9",
+    metadata: { storeKind: "table", provenance: "definition" },
+  });
+  edges.push({
+    source: "step:crowd/c7", target: "store:table/output-9", kind: "writes",
+    provenance: "definition", metadata: { access: "write" },
+  });
+  // API を挟む格納先。API カードが長い名前でサブカードとの中心が 30px 以上ズレても
+  // 縁は上下辺から出る（横に回り込まない）ことの検査用
+  nodes.push({
+    id: "boundary:http/crowd-api/push-and-pull", kind: "boundary",
+    name: "外部連携 API（既存の集約ジョブを呼び出して結果を受け取る）",
+    metadata: { boundaryKind: "http", provenance: "definition" },
+  });
+  edges.push({
+    source: "step:crowd/c7", target: "boundary:http/crowd-api/push-and-pull", kind: "invokes",
+    provenance: "definition", metadata: { access: "invoke" },
+  });
+  edges.push({
+    source: "boundary:http/crowd-api/push-and-pull", target: "store:table/output-9", kind: "reads",
+    provenance: "definition", metadata: { access: "read" },
+  });
+  edges.push({
+    source: "boundary:http/crowd-api/push-and-pull", target: "store:table/output-9", kind: "writes",
+    provenance: "definition", metadata: { access: "write" },
+  });
+  // 長いラベルのループ縁が左側通路から c5 へ戻る（カード上端を狙う）
+  [["step:crowd/c7", "10工程戻る・再試行"], ["step:crowd/c6", "別条件で 2 回までやり直し"]].forEach(function (p) {
+    edges.push({
+      source: p[0], target: "step:crowd/c5", kind: "next",
+      provenance: "definition",
+      metadata: { order: 5, label: p[1], loop: true },
+    });
+  });
+  return { nodes: nodes, edges: edges };
+}
+
+// 行間広げ（.lbl-gap）を確実に発火させるための混雑。ループ縁のラベルは x 固定
+// （keepX）で折り返さないため、カードを積んだ行の左列にそのまま乗り上げる。
+// 退避上限（44px）では避けきれないので行間を広げて回避する経路を通る
+function gapGraph() {
+  const N = [], E = [];
+  const ed = (source, target, kind, metadata) =>
+    E.push({ source: source, target: target, kind: kind, provenance: "definition", metadata: metadata || {} });
+  const step = (id, nm, order, md) => {
+    const m = Object.assign({ order: order, provenance: "definition" }, md || {});
+    N.push({ id: "step:gap/" + id, kind: "step", parent: "flow:gap", name: order + ". " + nm, metadata: m });
+    ed("flow:gap", "step:gap/" + id, "contains");
+  };
+  N.push({ id: "flow:gap", kind: "flow", name: "行間広げの検査フロー" });
+  ed("flow:gap", "flow:gap", "contains");
+  // ループ元をゲートウェイにする: 左列の先頭に「この分岐について」の注釈カードが入り、
+  // 高さ 44px を超える唯一種の障害物になる（退避上限では越えられない）
+  ["取り込み", "入力確認", "照合", "集約", "再試行判定", "後処理"].forEach((nm, i) => step("g" + (i + 1), nm, i + 1,
+    i === 5 ? {
+      stepKind: "gateway",
+      // 注釈カードをわざと縦長にして、左列の障害物を退避上限（44px）より高くする
+      description: "この行の左列にはこの注釈カードと格納先カードが積まれ、通路がほとんど残っていない。"
+        + "折り返さない長いラベルを退避させるとカードの上端に乗ったままになるため、行間を広げて避ける。"
+        + "行間が広がったら全たたみのときに跡が残らないことも合わせて確認する。",
+    } : null));
+  for (let i = 1; i < 6; i++) ed("step:gap/g" + i, "step:gap/g" + (i + 1), "next", { order: i + 1 });
+  // ループ元（g6）の左列に格納先を 6 枚積む（列がカードで埋まった行にラベルが乗る）
+  for (let i = 0; i < 6; i++) {
+    N.push({ id: "store:table/input-" + i, kind: "store", name: "input_" + i,
+      metadata: { storeKind: "table", provenance: "definition" } });
+    ed("step:gap/g6", "store:table/input-" + i, "reads", { access: "read" });
+  }
+  N.push({ id: "store:table/output-0", kind: "store", name: "output_0",
+    metadata: { storeKind: "table", provenance: "definition" } });
+  ed("step:gap/g6", "store:table/output-0", "writes", { access: "write" });
+  // 折り返さない長いラベルのループ縁を 2 本（退避しても列から逃げきれない長さ）
+  [["g6", "step:gap/g2", "10工程戻って入力確認からやり直す（再試行は 2 回まで）"],
+   ["g6", "step:gap/g3", "別条件での再試行（長期の待ち合わせを含む振り分け）"]].forEach(function (p) {
+    ed("step:gap/" + p[0], p[1], "next", { order: Number(p[1].slice(-1)), label: p[2], loop: true });
+  });
+  return { nodes: N, edges: E };
+}
 
 // ラベル無し分岐・同一端点の並行縁・自己ループは実データに無いので合成グラフで検査する
 function synthGraph() {
@@ -1192,6 +1386,18 @@ test("合成グラフ: ラベル無し分岐も描く／同一端点の並行縁
   const selfLbl = await p.locator("#flow-edge-labels text.loop").evaluateAll((ts) => ts.map((t) => t.textContent));
   assert.ok(selfLbl.some((t) => /↺/.test(t) && /やり直し/.test(t)),
     "自己ループのラベルが無い: " + JSON.stringify(selfLbl));
+  // 3a-2) 自己ループは通常タスク・ゲートウェイ両方で矢じりが外から入る
+  await p.click("#btn-expand-all");
+  await p.waitForTimeout(300);
+  const gSelf = await p.evaluate(flowGeomAudit);
+  checkClashOnly(gSelf, "合成・全展開");
+  assert.ok(gSelf.self.length >= 2,
+    "自己ループの検査対象が少ない（通常＋ゲートウェイで 2 本以上）: " + JSON.stringify(gSelf.self.map((x) => x.key)));
+  assert.ok(gSelf.self.some((x) => x.gw) && gSelf.self.some((x) => !x.gw),
+    "自己ループがゲートウェイ／通常タスクの両方をカバーしていない: " +
+    JSON.stringify(gSelf.self.map((x) => [x.key, x.gw])));
+  await p.click("#btn-collapse-all");
+  await p.waitForTimeout(300);
   // 3b) 全展開の狭い通路でも並行縁は同じ x に潰れない（全展開で各ステップの I/O も出る）
   await p.click("#btn-expand-all");
   await waitForEdgesAtLeast(p, 3);
@@ -1270,12 +1476,47 @@ test("合成グラフ: ラベル無し分岐も描く／同一端点の並行縁
   await p.close();
 });
 
+test("混雑配置でも縁ラベルの土台（.lbl-bg）がサイドカードの縁に重ならない", async () => {
+  const dir = join(OUT, "synth");
+  const json = join(dir, "crowd-synth.json");
+  const html = join(dir, "crowd-synth.html");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(json, JSON.stringify(crowdedGraph(), null, 1));
+  const r = spawnSync(process.execPath,
+    [join(ROOT, "bin", "render.mjs"), "--graph", json, "--out", html, "--title", "ラベル回避の検査"], { encoding: "utf8" });
+  assert.equal(r.status, 0, "合成グラフの描画に失敗: " + r.stderr);
+  const errs = [];
+  const p = await openFile(html, "#view=flow", errs);
+  await p.waitForSelector(".step-box");
+  await waitForEdgesAtLeast(p, 0);
+  await p.click("#btn-expand-all");
+  await p.waitForFunction(() => window.__flowViewer.flowView.edgeItems.length > 4, null, { timeout: 8000 });
+  await p.waitForTimeout(500);
+  // 混雑したsetupが効いていること（左カラムに複数のカードと、そこへ戻る長いループラベル）
+  const sideCards = await p.locator(".fc-side .fnode").count();
+  assert.ok(sideCards >= 5, "サイドカードが積まれておらず回避の検査になっていない: " + sideCards);
+  const loopLbls = await p.locator("#flow-edge-labels text.loop").evaluateAll((ts) => ts.map((t) => t.textContent));
+  assert.ok(loopLbls.some((t) => /10工程戻る/.test(t)), "ループラベルが出ていない: " + JSON.stringify(loopLbls));
+  const rep = await p.evaluate(flowGeomAudit);
+  checkClashOnly(rep, "混雑・全展開");
+  assert.ok(rep.labels.length >= 2, "縁ラベルが出ていない: " + rep.labels.map((l) => l.text).join("/"));
+  assert.ok(rep.cards.length >= 5, "サイドカードが測れていない: " + rep.cards.length);
+  // API とサブカードの中心が 30px 以上ズれた配置になっていること（横接続を誘う条件）
+  assert.ok(rep.api.some((A) => A.dx > 30),
+    "横ズレ 30px 超の配置が作れていない（検査が空振り）: " + JSON.stringify(rep.api.map((A) => [A.key, A.dx])));
+  assert.ok(rep.api.length >= 2,
+    "同一格納先への reads・writes の両方が描かれていない: " + JSON.stringify(rep.api.map((A) => A.key)));
+  assert.deepEqual(errs, [], "コンソールエラー: " + errs.join(" / "));
+  await p.screenshot({ path: join(SHOTS, "08-lbl-bg-crowd.png") });
+  await p.close();
+});
+
 test("全展開→全たたみで行間広げ（.lbl-gap）と描画層の高さが完全に戻る", async () => {
   const dir = join(OUT, "synth");
   const json = join(dir, "gap-synth.json");
   const html = join(dir, "gap-synth.html");
   mkdirSync(dir, { recursive: true });
-  writeFileSync(json, JSON.stringify(synthGraph(), null, 1));
+  writeFileSync(json, JSON.stringify(gapGraph(), null, 1));
   const r = spawnSync(process.execPath,
     [join(ROOT, "bin", "render.mjs"), "--graph", json, "--out", html, "--title", "後片付けの検査"], { encoding: "utf8" });
   assert.equal(r.status, 0, "合成グラフの描画に失敗: " + r.stderr);
@@ -1624,6 +1865,30 @@ test("テーマ: hash の theme= で共有（システム時は載せない）�
   await t.ctx.close();
 });
 
+test("URL に書き写した theme が保存値を打ち消さない（theme は共有 URL にだけ載る）", async () => {
+  const t = await openThemed("dark");
+  await t.p.click("#btn-expand-all");
+  await t.p.waitForTimeout(400);
+  assert.doesNotMatch(await t.p.evaluate(() => location.hash), /theme=/,
+    "操作しただけの URL に theme が書き写されている");
+  await t.p.evaluate(() => localStorage.setItem("flow-theme", "light"));
+  await t.p.reload({ waitUntil: "domcontentloaded" });
+  await t.p.waitForSelector("#status-bar", { timeout: 15000 });
+  assert.equal((await themeState(t.p)).theme, "light", "保存したライトが次回起動で効いていない");
+  await t.p.click("#btn-expand-all");
+  await t.p.waitForTimeout(400);
+  assert.doesNotMatch(await t.p.evaluate(() => location.hash), /theme=/,
+    "保存値のテーマが URL に書き写されている（次回以降の選択を打ち消す）");
+  await t.p.click("#btn-share");
+  assert.match(await t.p.getAttribute("#btn-share", "data-url"), /theme=light/,
+    "共有 URL に theme が無い（共有元の選択が伝わらない）");
+  await t.p.evaluate(() => localStorage.setItem("flow-theme", "dark"));
+  await t.p.reload({ waitUntil: "domcontentloaded" });
+  await t.p.waitForSelector("#status-bar", { timeout: 15000 });
+  assert.equal((await themeState(t.p)).theme, "dark", "自分で書いた URL の theme が保存値に勝った");
+  await t.ctx.close();
+});
+
 test("テーマ: ライトで全タブが読める（コントラスト）＋ライト版スクリーンショット", async () => {
   const { ctx, p } = await openThemed("light");
   assert.equal(await p.evaluate(() => document.documentElement.dataset.theme), "light");
@@ -1753,6 +2018,7 @@ test("ローカル注釈をクリアするとグラフが埋め込みデータ�
   for (const need of ["01-flow.png", "01b-flow-expanded.png", "01d-loop.png", "01e-gateway.png", "01g-branch.png",
     "01-flow-light.png", "01b-flow-light-expanded.png", "02-graph-light.png", "06-stores-light.png",
     "07-lbl-gap-expanded.png", "07-lbl-gap-restored.png",
+    "08-lbl-bg-crowd.png",
     "07-io-light.png", "08-code-light.png", "02c-graph-arrows.png"]) {
     assert.ok(shots.includes(need), "必須のスクリーンショットが無い: " + need);
   }

@@ -531,18 +531,18 @@ html[data-theme="light"] {
 </style>
 <script>
   /* 描画開始前にテーマを決めておいて、ちらつきを防ぐ（本体スクリプトでも同じ値を再適用する）。
-     保存キー flow-theme、hash の theme= が順に優先。どちらでもなければ prefers-color-scheme。 */
+     hash の theme=（共有 URL）、保存キー flow-theme の順に優先。どちらも無ければ prefers-color-scheme。 */
   (function () {
     try {
       var de = document.documentElement, m = "system";
+      var h = String(location.hash || "").match(/[#&]theme=(light|dark)(?=&|$)/);
+      if (h) m = h[1];   // 共有 URL は保存値より優先（本体スクリプトと同じ）
       try {
-        var v = window.localStorage.getItem("flow-theme");
-        if (v === "light" || v === "dark" || v === "system") m = v;
+        if (m === "system") {
+          var v = window.localStorage.getItem("flow-theme");
+          if (v === "light" || v === "dark" || v === "system") m = v;
+        }
       } catch (e) { /* localStorage 不可でも続行 */ }
-      if (m === "system") {
-        var h = String(location.hash || "").match(/[#&]theme=(light|dark)(?=&|$)/);
-        if (h) m = h[1];
-      }
       var light = m === "light" ||
         (m === "system" && window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches);
       de.setAttribute("data-theme", light ? "light" : "dark");
@@ -1003,19 +1003,22 @@ html[data-theme="light"] {
   var suppressingHash = false;
   function shareUrl() {
     var base = location.href.split("#")[0];
-    return base + "#" + hashQuery();
+    return base + "#" + hashQuery(true);
   }
-  function hashQuery() {
+  // theme は共有 URL にだけ載せる。生きている hash に書き写すと、その URL を再度開いた
+  // ときに「共有元の選択」が後から変えた保存値より優先されてしまい、テーマが元に戻らない
+  // （reload を繰り返す自動化スクリプトでは特に顕著）
+  function hashQuery(withTheme) {
     var p = new URLSearchParams();
     p.set("view", state.view);
     if (state.flowId) p.set("flow", state.flowId);
     if (state.selected) p.set("select", state.selected);
     if (state.view === "flow" && state.expanded.size) p.set("expanded", Array.from(state.expanded).join(","));
-    if (themeMode !== "system") p.set("theme", themeMode);
+    if (withTheme && themeMode !== "system") p.set("theme", themeMode);
     return p.toString();
   }
   function writeHash() {
-    var q = hashQuery();
+    var q = hashQuery(false);
     suppressingHash = true;
     try { history.replaceState(null, "", "#" + q); }
     catch (e) { location.hash = q; }
@@ -1654,9 +1657,12 @@ html[data-theme="light"] {
           wrap.appendChild(sub);
           placed.add(y.node.id);
           // reads も図上は「格納先 → API」の向き。writes は API → 格納先のまま
+          // サブカードは API カードの真下に積むので常に縦。カード幅の関係で中心の
+          // 横距離が 30px を超えると横接続を選んで格納先の右（詳細パネル側）まで
+          // 回り込むため、この縁だけは縦固定にする
           self.edgeItems.push(y.edge.kind === "reads"
-            ? { edge: y.edge, fromEl: sub, toEl: card }
-            : { edge: y.edge, fromEl: card, toEl: sub });
+            ? { edge: y.edge, fromEl: sub, toEl: card, vertical: true }
+            : { edge: y.edge, fromEl: card, toEl: sub, vertical: true });
         });
         right.appendChild(wrap);
       });
@@ -1816,7 +1822,7 @@ var row = sc.closest(".fc-row");
               loop: it.loop, self: it.self, side: it.side, up: !!it.back, chan: it.chan, fan: it.fan,
               srcGw: it.srcGw, dstGw: it.dstGw, vert: it.vert, vfan: it.vfan, gBase: sideGap,
             })
-          : bezier(box, ra, rb);
+          : bezier(box, ra, rb, it.vertical);
         it.d = g.d; it.tan = g.tan; it.face = g.face;
         if (it.link) { it.lx = g.lx; it.ly = g.ly; it.keepX = g.keepX; it.endAnchor = g.end; }
         it.bb = {
@@ -1942,6 +1948,11 @@ var row = sc.closest(".fc-row");
         obs.push({ x0: r.left - box.left, x1: r.right - box.left, y0: r.top - box.top, y1: r.bottom - box.top });
       });
       var placed = [];
+      var pad = 3;
+      // 土台（.lbl-bg）の実測矩形どうしの交差。2px の余白を見て、触るだけの重なりは許す
+      var cross = function (A, B) {
+        return A.x0 < B.x1 - 2 && A.x1 > B.x0 + 2 && A.y0 < B.y1 - 2 && A.y1 > B.y0 + 2;
+      };
       labels.forEach(function (L) {
         var len = 0;
         try { len = L.t.getComputedTextLength(); } catch (e) { len = String(L.t.textContent).length * 11; }
@@ -1954,47 +1965,53 @@ var row = sc.closest(".fc-row");
         }
         L.x0 = L.end ? L.x - len : L.x;
         L.x1 = L.end ? L.x : L.x + len;
-        for (var guard = 0; guard < 24; guard++) {
-          var hitY = null;
-          for (var i2 = 0; i2 < placed.length; i2++) {
-            var P = placed[i2];
-            if (L.x1 > P.x0 - 5 && L.x0 < P.x1 + 5 && Math.abs(L.y - P.y) < 17) hitY = Math.max(hitY || -1e9, P.y);
-          }
-          if (hitY === null) break;
-          L.y = hitY + 17;
-        }
-        // サイドカードに重なるラベルは下へ押し出す（大きく避けきれないときは土台で読ませる）
-        var shifted = 0;
-        for (var k4 = 0; k4 < 4 && shifted <= 44; k4++) {
+        L.t.setAttribute("x", L.x.toFixed(1));
+        L.t.setAttribute("y", L.y.toFixed(1));
+        // 土台（.lbl-bg）の実測矩形を先に 1 回だけ測る。候補ごとに getBBox を呼ぶと
+        // スクロール毎の再描画が重くなるので、ベースラインからの相対で持つ
+        var rdx = L.x0 - pad - L.x, rdy = L.y - 10.5 - pad - L.y;
+        var rw = L.x1 - L.x0 + pad * 2, rh = 14 + pad * 2;
+        try {
+          var bb0 = L.t.getBBox();
+          rdx = bb0.x - pad - L.x; rdy = bb0.y - pad - L.y;
+          rw = bb0.width + pad * 2; rh = bb0.height + pad * 2;
+        } catch (e) { /* 計測できなければ概算値 */ }
+        var rectAt = function (y) {
+          return { x0: L.x + rdx, x1: L.x + rdx + rw, y0: y + rdy, y1: y + rdy + rh };
+        };
+        // 候補位置のたびに「サイドカード」と「すでに置いたラベルの土台」の両方を見る。
+        // ベースライン±8 の概算でやると、土台はベースラインより 13px ほど上に伸びるため
+        // カードの上端（出所チップ）に乗ったまま「避けた」ことになっていた
+        var R = rectAt(L.y);
+        for (var guard = 0; guard < 8; guard++) {
           var need = null;
-          for (var k5 = 0; k5 < obs.length; k5++) {
-            var O = obs[k5];
-            if (L.x1 > O.x0 - 3 && L.x0 < O.x1 + 3 && L.y + 8 > O.y0 && L.y - 8 < O.y1) {
-              var nd = O.y1 + 9 - L.y;
+          for (var i2 = 0; i2 < obs.length; i2++) {
+            var O = obs[i2];
+            if (cross(R, O)) {
+              var nd = O.y1 + 3 - R.y0;
               if (need === null || nd > need) need = nd;
             }
           }
+          for (var i3 = 0; i3 < placed.length; i3++) {
+            var Q = placed[i3].rect;
+            if (cross(R, Q)) {
+              var nd2 = Q.y1 + 3 - R.y0;
+              if (need === null || nd2 > need) need = nd2;
+            }
+          }
+          // 大きく避けきれないときはこれ以上下がらない（行間を広げて避ける側に回す）
           if (need === null || need > 44) break;
           L.y += need;
-          shifted += need;
+          R = rectAt(L.y);
         }
-        for (var k6 = 0; k6 < placed.length; k6++) {
-          var Q = placed[k6];
-          if (L.x1 > Q.x0 - 5 && L.x0 < Q.x1 + 5 && Math.abs(L.y - Q.y) < 17) L.y = Q.y + 17;
-        }
-        L.t.setAttribute("x", L.x.toFixed(1));
+        L.rect = R;
         L.t.setAttribute("y", L.y.toFixed(1));
-        // 文字の直下に淡い土台（他レイヤと重なっても読める）
-        var pad = 3;
-        var bx = L.x0 - pad, by = L.y - 10.5 - pad, bw = L.x1 - L.x0 + pad * 2, bh = 14 + pad * 2;
-        try {
-          var bb2 = L.t.getBBox();
-          bx = bb2.x - pad; by = bb2.y - pad; bw = bb2.width + pad * 2; bh = bb2.height + pad * 2;
-        } catch (e) { /* 計測できなければ概算値 */ }
+        // 文字の直下に淡い土台（他レイヤと重なっても読める）。回避に使った実矩形そのもの
         var bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
         bg.setAttribute("class", "lbl-bg");
-        bg.setAttribute("x", bx.toFixed(1)); bg.setAttribute("y", by.toFixed(1));
-        bg.setAttribute("width", bw.toFixed(1)); bg.setAttribute("height", bh.toFixed(1));
+        bg.setAttribute("x", R.x0.toFixed(1)); bg.setAttribute("y", R.y0.toFixed(1));
+        bg.setAttribute("width", (R.x1 - R.x0).toFixed(1));
+        bg.setAttribute("height", (R.y1 - R.y0).toFixed(1));
         bg.setAttribute("rx", "3");
         lbl.insertBefore(bg, L.t);
         placed.push(L);
@@ -2004,9 +2021,9 @@ var row = sc.closest(".fc-row");
       if (!this._gapPass) {
         var gapRows = [];
         labels.forEach(function (L) {
+          if (!L.rect) return;
           for (var k8 = 0; k8 < obs.length; k8++) {
-            var O3 = obs[k8];
-            if (L.x1 > O3.x0 - 3 && L.x0 < O3.x1 + 3 && L.y + 8 > O3.y0 && L.y - 8 < O3.y1) {
+            if (cross(L.rect, obs[k8])) {
               if (L.row && gapRows.indexOf(L.row) < 0) gapRows.push(L.row);
               break;
             }
@@ -2216,9 +2233,12 @@ var row = sc.closest(".fc-row");
         exS = bx + Math.min(bw / 2 - 6, (acy - eyS) * (bw / 2) / Math.max(1, bh / 2));
       }
       var gyS = Math.min(acy - 20, eyS - 10);
+      // 縁の左（ガター側）から水平に右へ入る。内側から外へ向かう引き方だと
+      // orient=auto の矢じりがカードの外を向き、ひし形では輪郭に埋もれて見えない
+      var entryX = exS - stubS;
       var dS = "M" + ax + "," + acy +
         " C" + (ax - 16) + "," + (acy - 2) + " " + (gxS + 4) + "," + (acy - 12) + " " + gxS + "," + gyS +
-        " C" + gxS + "," + (gyS - 12) + " " + (exS + stubS) + "," + (eyS - 12) + " " + (exS + stubS) + "," + eyS +
+        " C" + gxS + "," + (gyS - 12) + " " + (entryX - 8) + "," + (eyS - 8) + " " + entryX + "," + eyS +
         " L" + exS + "," + eyS;
       return { d: dS, tan: 0, face: "right", keepX: true, end: true, lx: gxS - 8, ly: gyS - 8 };
     }
@@ -2309,12 +2329,12 @@ var row = sc.closest(".fc-row");
   // 2 つのカード間のベジェ。出る辺・入る辺を決め、制御点をその辺の外側法線上に張る。
   // そうすれば終端接線は必ず入る辺の法線（＝矢印の向き）と一致し、端だけ寝ることがない。
   // 制御点の間隔は gap に比例させ、曲線が巻き戻らない範囲に収める。
-  function bezier(box, ra, rb) {
+  function bezier(box, ra, rb, vertical) {
     var ax = ra.left - box.left, ay = ra.top - box.top, aw = ra.width, ah = ra.height;
     var bx = rb.left - box.left, by = rb.top - box.top, bw = rb.width, bh = rb.height;
     var acx = ax + aw / 2, acy = ay + ah / 2, bcx = bx + bw / 2, bcy = by + bh / 2;
     var x1, y1, x2, y2, nx, ny, face, gap;
-    if (Math.abs(bcx - acx) > 30 && Math.abs(bcx - acx) >= Math.abs(bcy - acy)) {
+    if (!vertical && Math.abs(bcx - acx) > 30 && Math.abs(bcx - acx) >= Math.abs(bcy - acy)) {
       var dir = bcx > acx ? 1 : -1;
       x1 = dir > 0 ? ax + aw : ax;
       x2 = dir > 0 ? bx : bx + bw;
