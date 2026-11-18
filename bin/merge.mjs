@@ -90,9 +90,32 @@ function addNode(id, kind, name, metadata = {}, origin = "definition") {
 
 const edges = new Map(); // edgeKey → edge（lower-rank の重複は note を上位へ寄せる）
 const EDGE_RANK = { definition: 0, static: 1, llm: 2, human: 3 };
+/** store/boundary の ID は参照と同じ規則に寄せる（Order_Items と order-items が別ノードに分裂するのを防ぐ） */
+function canonicalId(id) {
+  const kind = kindOfId(id);
+  if (!kind || (kind !== "store" && kind !== "boundary")) return id;
+  const norm = refToNode(id.slice(kind.length + 1), kind);
+  return norm ? norm.id : null;
+}
+
+// 縁の端点の型規則。注釈由来でも手作りでも、契約（docs/schema.md）の向きのまましか張らない
+const EDGE_SHAPE = {
+  contains: (s, t) => s.kind === "flow" && t.kind === "step",
+  next: (s, t) => s.kind === "step" && t.kind === "step" && s.parent === t.parent,
+  reads: (s, t) => ["step", "boundary"].includes(s.kind) && t.kind === "store",
+  writes: (s, t) => ["step", "boundary"].includes(s.kind) && t.kind === "store",
+  invokes: (s, t) => s.kind === "step" && t.kind === "boundary",
+  "implemented-by": (s, t) => s.kind === "step" && t.kind === "code",
+  touches: (s, t) => s.kind === "code" && ["store", "boundary"].includes(t.kind),
+};
+
 function addEdge(source, target, kind, { provenance = "definition", confidence, note, metadata } = {}) {
   if (!nodes.has(source) || !nodes.has(target)) {
     warn(`エッジの端点が存在しないので捨てました: ${source} -${kind}-> ${target}`);
+    return null;
+  }
+  if (!(EDGE_SHAPE[kind] ?? (() => true))(nodes.get(source), nodes.get(target))) {
+    warn(`エッジの端点の型が規則外なので捨てました: ${source} -${kind}-> ${target}`);
     return null;
   }
   if (source === target && kind !== "next") return null; // 自己ループは next（自分自身への分岐）だけ許す
@@ -100,7 +123,7 @@ function addEdge(source, target, kind, { provenance = "definition", confidence, 
   // （同一端点で黙って統合すると、条件や読み書きが最初の 1 本に吸収されて消える）
   let key = edgeKey({ source, kind, target });
   if (kind === "next") {
-    if (metadata?.label) key += `|${metadata.label}`;
+    if (metadata && Object.hasOwn(metadata, "label")) key += `|label:${JSON.stringify(metadata.label)}`;
     if (metadata?.loop) key += "|loop";
   }
   if (kind === "touches" && metadata?.access) key += `|${metadata.access}`;
@@ -141,12 +164,13 @@ if (opt.scan) {
   };
   const candidate = (list, kindField, metaField) => {
     for (const c of list ?? []) {
-      const kind = kindOfId(c.id);
+      const id = canonicalId(c.id);
+      const kind = id ? kindOfId(id) : null;
       if (kind !== "store" && kind !== "boundary") {
         warn(`scan の候補 ID が規則外です（スキップ）: ${c.id}`);
         continue;
       }
-      addNode(c.id, kind, c.name ?? c.id, {
+      addNode(id, kind, c.name ?? c.id, {
         [metaField]: c[kindField] ?? c.id.split(":")[1].split("/")[0],
         candidate: true,
         evidence: c.evidence ?? [],
@@ -160,9 +184,14 @@ if (opt.scan) {
   for (const f of scan.files ?? []) {
     for (const s of f.signals ?? []) {
       if (!s.ref) continue;
-      const side = s.ref.startsWith("http/") || /^(lambda|sfn|grpc|cli)\//.test(s.ref) ? "boundary" : "store";
-      const parsed = refToNode(s.ref, side);
-      if (!parsed) continue;
+      // invoke 系信号は boundary 側、他は store 側を先に試す。外れたら反対側も評価し、
+      // 両方で規則外なら黙って捨てず警告する（HTTP/... の大文字混じりも正規化で拾う）
+      const preferred = signalAccess(s.signal) === "invoke" ? "boundary" : "store";
+      const parsed = refToNode(s.ref, preferred) ?? refToNode(s.ref, preferred === "store" ? "boundary" : "store");
+      if (!parsed) {
+        warn(`scan の参照が規則外なので捨てました: ${JSON.stringify(s.ref)}（${f.path}:${s.line ?? "?"}、"<種別>/<パス>" 形へ）`);
+        continue;
+      }
       if (!nodes.has(parsed.id)) {
         // candidates 一覧から漏れた ref はその場で候補として起こす
         addNode(parsed.id, parsed.kind, parsed.name, {
@@ -200,11 +229,15 @@ if (opt.flows) {
         continue;
       }
       const flowId = `flow:${flow.id}`;
+      if (nodes.has(flowId)) warn(`${file}: flow ${flowId} は別定義とマージされます（id を変えてください）`);
+      const { id: _fid, name: _fname, owner: fOwner, description: fDesc, steps: _fSteps, ...flowMeta } = flow;
       addNode(flowId, "flow", flow.name ?? flow.id, {
-        owner: flow.owner,
-        description: flow.description,
+        ...(fOwner !== undefined ? { owner: fOwner } : {}),
+        ...(fDesc !== undefined ? { description: fDesc } : {}),
+        ...flowMeta, // docs/sla など自由キーは metadata に残す
         provenance: "definition",
       });
+      if ((flow.steps ?? []).length === 0) warn(`${file}: flow ${flowId} に steps がありません`);
       // 1 周目: ノードと入出力（branches の to が前方参照でも良いように、縁は 2 周目にまとめて張る）
       const seq = []; // { stepId, step, order }
       let order = 0;
@@ -213,20 +246,32 @@ if (opt.flows) {
           warn(`${file}: flow ${flow.id} に id の無い step をスキップ`);
           continue;
         }
-        order += 1;
         const stepId = `step:${flow.id}/${step.id}`;
-        if (nodes.has(stepId)) warn(`${file}: step ${stepId} が重複しています（縁は追記）`);
-        const hasBranches = Array.isArray(step.branches) && step.branches.length > 0;
+        if (nodes.has(stepId)) {
+          warn(`${file}: step ${stepId} が重複しています（後の定義をスキップ）`);
+          continue;
+        }
+        order += 1;
+        // branches は「キーの有無」で意味を持つ。空配列でも出口は抑止し、枝不足として警告する
+        const hasBranchesKey = Object.hasOwn(step, "branches");
+        if (hasBranchesKey && !Array.isArray(step.branches)) {
+          warn(`${file}: ${stepId} の branches は配列でなければなりません（無視します）`);
+          step.branches = [];
+        }
+        const hasBranches = hasBranchesKey && step.branches.length > 0;
         let gateway = step.kind === "gateway";
-        if (hasBranches && !gateway) {
-          warn(`${file}: ${stepId} に branches があるため kind: "gateway" として扱いました（宣言を推奨）`);
+        if (hasBranchesKey && !gateway) {
+          warn(`${file}: ${stepId} に branches キーがあるため kind: "gateway" として扱いました（宣言を推奨）`);
           gateway = true;
         }
-        if (gateway && !hasBranches) warn(`${file}: gateway ${stepId} に branches が無く、ただの通過点です`);
-        if (gateway && hasBranches && step.branches.length < 2) warn(`${file}: gateway ${stepId} の branches が 1 本しかありません（分岐の意味を再考してください）`);
+        if (gateway && !hasBranchesKey) warn(`${file}: gateway ${stepId} に branches が無く、ただの通過点です`);
+        if (gateway && hasBranchesKey && step.branches.length < 2)
+          warn(`${file}: gateway ${stepId} の branches が ${step.branches.length} 本しかありません（分岐の意味を再考してください）`);
+        const { id: _sid, name: _sname, kind: _skind, docs: sDocs, description: sDesc, branches: _sBr, reads: _sr, writes: _sw, invokes: _si, ...stepMeta } = step;
         const node = addNode(stepId, "step", step.name ?? step.id, {
-          docs: step.docs,
-          description: step.description,
+          ...(sDocs !== undefined ? { docs: sDocs } : {}),
+          ...(sDesc !== undefined ? { description: sDesc } : {}),
+          ...stepMeta, // 自由キー（team など）は metadata に残す
           ...(gateway ? { stepKind: "gateway" } : {}),
           provenance: "definition",
         });
@@ -257,7 +302,7 @@ if (opt.flows) {
       const orderOf = new Map(seq.map((s) => [s.stepId, s.order]));
       let prev = null;
       for (const { stepId, step, order: ord } of seq) {
-        const hasBranches = Array.isArray(step.branches) && step.branches.length > 0;
+        const hasBranches = Object.hasOwn(step, "branches"); // 空配列でも「明示分岐のみ」という宣言とみなす
         // 前が線形ステップなら、次が gateway でも通常タスクでも暗黙の次へを張る
         // （抑止するのは branches を持つステップの「出口」だけ）
         if (prev) {
@@ -271,7 +316,11 @@ if (opt.flows) {
             const kept = addEdge(stepId, targetId, "next", {
               provenance: "definition",
               confidence: 1,
-              metadata: { order: orderOf.get(targetId) ?? ord, ...(b.label ? { label: b.label } : {}), ...(loop ? { loop: true } : {}) },
+              metadata: {
+                order: orderOf.get(targetId) ?? ord,
+                ...(typeof b.label === "string" ? { label: b.label } : {}), // 空文字ラベルも保持
+                ...(loop ? { loop: true } : {}),
+              },
             });
             if (loop && kept) process.stdout.write(`ループ検出: ${stepId} → ${targetId}${b.label ? ` (${b.label})` : ""}\n`);
           }
@@ -315,18 +364,24 @@ for (const file of [...(opt.annotation ?? [])].sort(byString)) {
     warn(`${file}: producer "${doc.producer}" は llm に解釈し直しました`);
 
   for (const n of doc.nodes ?? []) {
-    const kind = kindOfId(n.id);
+    const id = canonicalId(n.id);
+    const kind = id ? kindOfId(id) : null;
     if (!kind || !["store", "boundary"].includes(kind)) {
       warn(`${file}: 注釈ノード ${n.id} は store:/boundary: の規則外なので捨てました（flow/step/code は注釈で作れない）`);
       continue;
     }
-    addNode(n.id, kind, n.name ?? n.id, { ...(n.metadata ?? {}), provenance: producer });
+    addNode(id, kind, n.name ?? n.id, { ...(n.metadata ?? {}), provenance: producer });
   }
 
-  for (const e of doc.edges ?? []) {
-    const kind = e.kind;
+  for (const raw of doc.edges ?? []) {
+    const kind = raw.kind;
     if (!EDGE_KINDS.has(kind)) {
-      warn(`${file}: 未知の edge kind "${kind}" を捨てました (${e.source} -> ${e.target})`);
+      warn(`${file}: 未知の edge kind "${kind}" を捨てました (${raw.source} -> ${raw.target})`);
+      continue;
+    }
+    const e = { ...raw, source: canonicalId(raw.source), target: canonicalId(raw.target) };
+    if (e.source === null || e.target === null) {
+      warn(`${file}: エッジ端点 ${e.source === null ? raw.source : raw.target} が規則外なので捨てました (${raw.source} -${kind}-> ${raw.target})`);
       continue;
     }
     if (!nodes.has(e.source) || !nodes.has(e.target)) {
@@ -345,17 +400,27 @@ for (const file of [...(opt.annotation ?? [])].sort(byString)) {
 
   for (const m of doc.metadata ?? []) {
     const match = m.match ?? {};
+    const matchId = match.id === undefined ? undefined : canonicalId(match.id);
+    if (match.id !== undefined && matchId === null) {
+      warn(`${file}: metadata 注釈の match.id ${match.id} が規則外なので採用しません`);
+      continue;
+    }
     const hits = [...nodes.values()].filter((n) => {
       if (Object.keys(match).length === 0) return false;
       if (match.kind && n.kind !== match.kind) return false;
-      if (match.id && n.id !== match.id) return false;
+      if (matchId !== undefined && n.id !== matchId) return false;
       if (match.path && n.id !== `code:${match.path}`) return false;
       if (match.name && n.name !== match.name) return false;
       return true;
     });
     if (hits.length === 0) warn(`${file}: metadata 注釈の match が 0 件: ${JSON.stringify(match)}`);
     else if (hits.length > 1) warn(`${file}: metadata 注釈の match が ${hits.length} 件あって採用しません: ${JSON.stringify(match)}`);
-    else Object.assign(hits[0].metadata, m.set ?? {});
+    else {
+      // 出所（provenance）は生成時の事実。注釈で「人」「静的解析」に偽装できなくする
+      const { provenance: fakeProvenance, ...safe } = m.set ?? {};
+      if (fakeProvenance !== undefined) warn(`${file}: metadata 注釈で provenance を上書きできません（${hits[0].id} への指定を無視）`);
+      Object.assign(hits[0].metadata, safe);
+    }
   }
 }
 

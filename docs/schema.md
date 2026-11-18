@@ -147,6 +147,17 @@ JSON にコメントを許す（JSONC）。`--flows` に渡したディレクト
 - 同じステップに `reads` と `writes` で同じ参照を書くと双向の縁になる（自己ループにはしない）。
   scan 由来の `touches` も、同一コード×同一格納先でも `access`（read / write / invoke）が
   違えば別縁（信号の並び順に依存せず、読みと書きは混ざらない）
+- **ID の正規化**: store/boundary の ID は scan 候補・注釈ノード・注釈エッジの端点・
+  metadata 注釈の match まで、参照と同じ規則（小文字、`_` と空白は `-`）に寄せる。
+  `Order_Items` と `order-items` は同一ノード。表示名は原表記のまま残す
+- **縁の端点の型**: 上の縁の表の向きどおりだけを受理する（例: `reads` の source は step か
+  boundary、target は store）。型違反の注釈エッジは警告して捨てる
+- **出所は書き換え不可**: metadata 注釈の `set` に `provenance` を書いても拒否して警告する
+  （llm 注釈が「人」や「静的解析」を装う通路にしない）。他のキーは 通常どおり適用
+- **step id の重複**は後の定義を警告付きでスキップ（`order` の連番も崩れない）。
+  **flow id の再定義**（別ファイルからの同名）はマージされるが警告する。空 steps は警告
+- `branches` はキーの有無で宣言とみなす。空配列なら出口の暗黙 next を張らず枝不足として
+  警告する。`label` の空文字は正当な値として保持（無 label の縁とは別縁）
 
 ## scan.json（scan.mjs の出力）
 

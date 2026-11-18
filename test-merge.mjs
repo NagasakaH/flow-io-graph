@@ -82,9 +82,11 @@ test("touches は code→store/boundary に張り、access をシグナル名か
 
 test("注釈: 新規ノード追加・edge 採用・存在しない端点は警告して捨てる", (t) => {
   const { graph, stderr } = merge();
-  const erp = node(graph, "store:table/erp_invoices");
+  // 注釈 ID の erp_invoices は格納 ID として正規化され erp-invoices に寄る（表示名は原表記）
+  const erp = node(graph, "store:table/erp-invoices");
   assert.equal(erp.metadata.provenance, "llm");
-  assert.equal(edge(graph, "step:ship/pack", "writes", "store:table/erp_invoices").confidence, 0.65);
+  assert.equal(erp.name, "erp_invoices");
+  assert.equal(edge(graph, "step:ship/pack", "writes", "store:table/erp-invoices").confidence, 0.65);
   assert.match(stderr, /store:table\/nope/);
   assert.equal(node(graph, "flow:not-allowed"), undefined, "flow: は注釈で作れない");
   assert.match(stderr, /flow:not-allowed/);
