@@ -190,7 +190,7 @@ aside.detail {
 }
 @media (max-width: 760px) {
   /* 狭い画面では詳細パネルを下へ積む。横に 320px 確保すると本文が 40px に潰れるため */
-  main.body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1.5fr) minmax(0, 1fr); }
+  main.body { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 3fr) minmax(0, 1fr); }
   aside.detail { border-left: 0; border-top: 1px solid var(--line); }
   /* フィルタチップが折り返すと本文が沈むので、狭い画面では 1 行を横スクロールさせる */
   .filter-row { flex-wrap: nowrap; overflow-x: auto; gap: 10px; padding-bottom: 2px; }
@@ -265,6 +265,16 @@ table.grid tbody tr.sel { background: var(--bg-sel); }
 }
 .flow-bar .hintline { color: var(--dim); }
 .flow-bar b { font-size: 12.5px; }
+@media (max-width: 760px) {
+  /* ツールバーは 260px 高に折り返して図を常時覆うので、狭い画面では 1 行に流して図の高さを返す */
+  .flow-bar { position: relative; flex-wrap: nowrap; overflow-x: auto; padding: 5px 6px; gap: 8px; }
+  .flow-bar > * { flex: 0 0 auto; }
+  .flow-bar .hintline {
+    color: var(--dim); flex: 1 1 140px; min-width: 80px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .flow-bar .legend { margin-bottom: 0; flex-wrap: nowrap; gap: 9px; }
+}
 .fc-lane { position: relative; display: flex; flex-direction: column; padding: 6px 8px 22px; }
 #flow-edges { position: absolute; inset: 0; pointer-events: none; z-index: 0; overflow: visible; }
 #flow-edges path.edge { fill: none; stroke-width: 1.6; opacity: .8; }
@@ -379,6 +389,8 @@ table.grid tbody tr.sel { background: var(--bg-sel); }
 .step-box.gw:hover::before, .step-box.gw.expanded::before { background: var(--accent); }
 .step-box.gw.hl::before { background: var(--warn); }
 .step-box.gw.expanded::after { background: var(--bg-gw-open); }
+/* ラベルがサイドカードと空かない行だけ行間を広げる（drawEdges が測り直して付ける） */
+.fc-row.lbl-gap { padding-bottom: 30px; }
 /* ひし形に四角い outline は似合わないので、選択・強調は疑似要素側の色で出す */
 .step-box.gw.selected, .step-box.gw.hl { outline: none; }
 .step-box.gw.selected::before { background: var(--accent); filter: drop-shadow(0 0 5px var(--accent-glow)); }
@@ -1405,10 +1417,11 @@ html[data-theme="light"] {
         self.lane.appendChild(row);
       });
       var lastId = shown.length ? shown[shown.length - 1].id : "";
-      var fwdOut = outsOf(lastId).some(function (e) {
-        return e.kind === "next" && (self.stepIdx.get(e.target) || 0) > (self.stepIdx.get(lastId) || 0);
-      });
-      if (lastId && !fwdOut) {
+      // 「終了」は表示中の行番号では決まらない。後方 next（ループで戻る）だけを持つ末尾や、
+      // 「さらに表示」で切れて後続がまだ描かれていない行は、続いているので終了にしない。
+      // 判定は実データ（フィルタ前の next の有無）で行う。
+      var hasNext = lastId ? (state.out.get(lastId) || []).some(function (e) { return e.kind === "next"; }) : true;
+      if (lastId && !hasNext) {
         // フローの終点（終了）の目印。次段がある場合（「さらに表示」）は出さない
         this.lane.appendChild(this.arrowRow());
         this.lane.appendChild(this.termRow("終了"));
@@ -1416,8 +1429,11 @@ html[data-theme="light"] {
       this.collectLinks(boxes);
       if (steps.length > shown.length) {
         this.more.textContent = "さらに " + Math.min(FLOW_COL_CAP, steps.length - shown.length) + " 件表示";
-        clear(this.moreWrap).appendChild(el("span", { class: "hint", id: "flow-more-note" },
-          "ほか " + (steps.length - shown.length) + " ステップ"), this.more);
+        // appendChild は子を 1 つしか受け取らない。2 つ目を渡すと黙って落ちる（ボタンが消えていた）
+        var moreHint = el("span", { class: "hint", id: "flow-more-note" },
+          "ほか " + (steps.length - shown.length) + " ステップ");
+        clear(this.moreWrap).appendChild(moreHint);
+        this.moreWrap.appendChild(this.more);
         this.lane.appendChild(this.moreWrap);
       }
       this.renderCandidates(placed);
@@ -1506,10 +1522,12 @@ html[data-theme="light"] {
         el("div", { class: "fc-side-slot" }));
     },
     arrowRow: function () {
+      // 左右はステップ行と同じ .fc-side-slot（余白を等分に割る）にしないと、
+      // ▼ だけが 440px 幅の先頭に寄ってしまい列の中央に揃わない。
       return el("div", { class: "fc-row fc-arrow-row" },
-        el("div", { class: "fc-side" }),
+        el("div", { class: "fc-side-slot" }),
         el("div", { class: "fc-arrow", title: "next" }, downArrowSvg()),
-        el("div", { class: "fc-side" }));
+        el("div", { class: "fc-side-slot" }));
     },
     stepRow: function (n, order, placed) {
       var open = state.expanded.has(n.id);
@@ -1862,9 +1880,11 @@ var row = sc.closest(".fc-row");
         t.setAttribute("data-label", it.edge.source + "|" + it.edge.target);
         t.textContent = (it.loop ? "↺ " : "") + it.label;
         lbl.appendChild(t);
+        var lrow = lane.querySelector('.step-box[data-node="' + cssEscape(it.edge.source) + '"]');
         labels.push({
         t: t, x: it.lx, y: it.ly, loop: !!it.loop,
         end: !!it.loop || !!it.endAnchor, keepX: !!it.keepX,
+        row: lrow ? lrow.closest(".fc-row") : null,
       });
       });
       // ラベル配置: はみ出したものは縁の反対側へ回し、重なりは下へ押して避ける。
@@ -1945,6 +1965,28 @@ var row = sc.closest(".fc-row");
         lbl.insertBefore(bg, L.t);
         placed.push(L);
       });
+      // 上下へ退避してもサイドカード（注釈チップ込み）と空かないラベルは、その行の
+      // 行間を広げてから測り直す（I/O の多いデータでは退避先が尽くされるため）。
+      if (!this._gapPass) {
+        var gapRows = [];
+        labels.forEach(function (L) {
+          for (var k8 = 0; k8 < obs.length; k8++) {
+            var O3 = obs[k8];
+            if (L.x1 > O3.x0 - 3 && L.x0 < O3.x1 + 3 && L.y + 8 > O3.y0 && L.y - 8 < O3.y1) {
+              if (L.row && gapRows.indexOf(L.row) < 0) gapRows.push(L.row);
+              break;
+            }
+          }
+        });
+        if (gapRows.length) {
+          this._gapPass = true;   // 測り直しは 1 度だけ（発散させない）
+          gapRows.forEach(function (r) { r.classList.add("lbl-gap"); });
+          this.measureEdges();
+          this.drawEdges();
+          this._gapPass = false;
+          return;
+        }
+      }
       if (this.hudCull) {
         var msg = skipped ? "画面外の縁 " + skipped.toLocaleString() + " 本は描画中略" : "";
         this.hudCull.textContent = msg;
@@ -1986,14 +2028,22 @@ var row = sc.closest(".fc-row");
     list.sort(function (a, b) { return a.order - b.order || (a.id < b.id ? -1 : 1); });
     return list;
   }
+  // 描画・一覧で使う「見た目の向き」。reads だけ生データ（task → store）と逆に描く。
+  // JSON の端点は書き換えず、注釈や根拠は常に元の縁へ結ぶ。
+  function visualEnds(e) {
+    return e.kind === "reads" ? [e.target, e.source] : [e.source, e.target];
+  }
   // boundary → store の reads/writes（API の向こう側）
   function boundaryBackends(b) {
     var out = [], seen = new Set();
     outsOf(b.id).forEach(function (e) {
       if (e.kind !== "reads" && e.kind !== "writes") return;
       var t = state.byId.get(e.target);
-      if (!t || t.kind !== "store" || seen.has(t.id)) return;
-      seen.add(t.id);
+      if (!t || t.kind !== "store") return;
+      // 向き違いの縁（読みと書き）は別カード。格納先 ID だけで消すと片方が見えなくなる
+      var bkey = t.id + "\u0000" + e.kind;
+      if (seen.has(bkey)) return;
+      seen.add(bkey);
       out.push({ node: t, edge: e });
     });
     return out;
@@ -2509,7 +2559,8 @@ var row = sc.closest(".fc-row");
       var painted = 0, skipped = 0;
       // 終端の三角。向きは終端接線（ここ直線なので方向そのもの）から atan2 で出す。
       function paintEdge(e, hot) {
-        var a = self.pos.get(e.source), b = self.pos.get(e.target);
+        var ve = visualEnds(e);
+        var a = self.pos.get(ve[0]), b = self.pos.get(ve[1]);
         if (!a || !b) return false;
         var em = e.metadata || {};
         if (a === b) {
@@ -3174,10 +3225,16 @@ var row = sc.closest(".fc-row");
     host.appendChild(kv);
 
     // --- 縁 ---
-    host.appendChild(el("div", { class: "sec-title" }, "出力縁（このノード → 相手）"));
-    host.appendChild(edgeSection(outsOf(n.id), "out"));
+    // 入出力の仕分けは見た目の向き（reads は反転して描くため、一覧だけ向きが違うと迷う）。
+    // 注釈・根拠・縁の詳細は元の縁のまま据える。
+    var vOut = [], vIn = [];
+    outsOf(n.id).forEach(function (e) { (visualEnds(e)[0] === n.id ? vOut : vIn).push(e); });
+    insOf(n.id).forEach(function (e) { (visualEnds(e)[0] === n.id ? vOut : vIn).push(e); });
+    host.appendChild(el("div", { class: "sec-title" }, "出力縁（このノード → 相手）",
+      el("span", { class: "dim" }, "　※ 読み取りは 格納先 → タスク 向き")));
+    host.appendChild(edgeSection(vOut, "out"));
     host.appendChild(el("div", { class: "sec-title" }, "入力縁（相手 → このノード）"));
-    host.appendChild(edgeSection(insOf(n.id), "in"));
+    host.appendChild(edgeSection(vIn, "in"));
 
     // --- evidence ---
     if (evs.length) {
@@ -3201,14 +3258,18 @@ var row = sc.closest(".fc-row");
   }
 
   function detailEdgeBlock(e) {
-    var s = state.byId.get(e.source), t = state.byId.get(e.target);
+    var ve = visualEnds(e);
+    var s = state.byId.get(ve[0]), t = state.byId.get(ve[1]);
+    var nm = function (id) { var q = state.byId.get(id); return q ? q.name : id; };
     return el("div", { class: "card-panel", style: "margin-top:8px", id: "detail-edge" },
       el("div", { class: "eg-title" }, el("b", {}, "選択中の縁"), el("span", { class: "dim" }, e.kind),
         el("button", { class: "btn small ghost", style: "margin-left:auto", onclick: function () {
           state.detailEdge = null; renderDetail();
         } }, "閉じる")),
-      el("div", {}, nodeLink(e.source, s ? s.name : e.source), " —" + (EDGE_LABEL[e.kind] || e.kind) + "→ ",
-        nodeLink(e.target, t ? t.name : e.target)),
+      el("div", {}, nodeLink(ve[0], s ? s.name : ve[0]), " —" + (EDGE_LABEL[e.kind] || e.kind) + "→ ",
+        nodeLink(ve[1], t ? t.name : ve[1])),
+      ve[0] !== e.source ? el("div", { class: "dim", style: "margin-top:2px" },
+        "データ上の向きは " + nm(e.source) + " → " + nm(e.target) + "（読み取り縁は 格納先 → タスク で描く）") : null,
       el("div", { style: "margin-top:4px" }, provChip(e.provenance), " ",
         el("span", { class: "er-conf" }, confText(e.confidence))),
       e.note ? el("div", { class: "er-note" }, "根拠: " + e.note) : null,
@@ -3239,7 +3300,7 @@ var row = sc.closest(".fc-row");
       var g = el("div", { class: "edge-group" },
         el("div", { class: "eg-title" }, el("b", {}, EDGE_LABEL[kind] || kind), el("span", { class: "dim" }, kind + " × " + groups.get(kind).length)));
       groups.get(kind).forEach(function (e) {
-        var other = dir === "out" ? e.target : e.source;
+        var other = visualEnds(e)[dir === "out" ? 1 : 0];
         var on = state.byId.get(other);
         g.appendChild(el("div", {
           class: "edge-row", title: "縁の詳細を開く",
@@ -3252,7 +3313,13 @@ var row = sc.closest(".fc-row");
             e.metadata && e.metadata.loop ? el("span", { class: "badge loop" }, "ループ") : null,
             provChip(e.provenance),
             el("span", { class: "er-conf" }, confText(e.confidence)),
-            e.metadata && e.metadata.access ? el("span", { class: "badge" }, "access: " + e.metadata.access) : null),
+            (function () {
+              // scan 由来の touches は方向が決まらないことがある（unknown）。素出しせず「方向未判定」と出す
+              var acc = e.metadata && e.metadata.access;
+              if (!acc) return null;
+              var ACC = { read: "読み取り", write: "書き込み", invoke: "呼び出し", unknown: "方向未判定" };
+              return el("span", { class: "badge" }, ACC[acc] ? "アクセス: " + ACC[acc] : "access: " + String(acc));
+            })()),
           e.note ? el("div", { class: "er-note" }, "根拠: " + e.note) : null));
       });
       box.appendChild(g);
@@ -3588,6 +3655,7 @@ var row = sc.closest(".fc-row");
     views: views,
     graphView: graphView,
     flowView: flowView,
+    visualEnds: visualEnds,
     setView: setView,
     selectNode: selectNode,
     shareUrl: shareUrl,

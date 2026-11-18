@@ -424,7 +424,9 @@ test("ノードをクリックすると詳細パネルに note と縁が出る",
   assert.match(text, /payments-svc の README/); // 入力縁（human）の note
   assert.match(text, /書き込み/);
   assert.match(text, /人間/); // provenance バッジ
-  assert.equal(await page.locator("#detail-edges-in .edge-row").count(), 2);
+  // 境界からの書き込み 1 本。読み取り 1 本は 格納先 → タスク 向きで描くので出力縁側へ移る
+  assert.equal(await page.locator("#detail-edges-in .edge-row").count(), 1);
+  assert.match(await page.innerText("#detail-edges-out"), /reads/);
   // ID コピー／URL 共有ボタンがある
   assert.ok(await page.locator('#detail-panel button:has-text("URL 共有")').count());
   await page.screenshot({ path: join(SHOTS, "03-detail.png"), clip: await page.locator("#detail-panel").boundingBox() });
@@ -776,7 +778,30 @@ function flowGeomAudit() {
     const p1 = { x: mm.a * (bb.x + bb.width) + mm.e, y: mm.d * (bb.y + bb.height) + mm.f };
     return { text: t.textContent.trim(), x0: p0.x, y0: p0.y, x1: p1.x, y1: p1.y };
   });
-  return { paths: paths, labels: labels, infos: infos, gws: gws };
+  // 通常進行の ▼（.fc-arrow-row）と、同じ行の .fc-mid（ステップ列）の中心 X
+  const cx = (el) => { const r = el.getBoundingClientRect(); return r.left + r.width / 2; };
+  const arrows = Array.from(fv.lane.querySelectorAll(".fc-arrow-row")).map((r) => {
+    const g = r.querySelector(".fc-arrow-svg") || r.querySelector(".fc-arrow");
+    const q = g.getBoundingClientRect();
+    const pv = r.previousElementSibling ? r.previousElementSibling.querySelector(".fc-mid") : null;
+    const nx = r.nextElementSibling ? r.nextElementSibling.querySelector(".fc-mid") : null;
+    return {
+      cx: q.left + q.width / 2, prev: pv ? cx(pv) : null, next: nx ? cx(nx) : null,
+      y0: q.top, y1: q.bottom,
+    };
+  });
+  // 見えているサイドカード（注釈チップ込みの矩形。列ではみ出した部分はクリップして数えない）
+  const cards = [];
+  Array.prototype.forEach.call(fv.lane.querySelectorAll(".fc-side"), (col) => {
+    const cr = col.getBoundingClientRect();
+    Array.prototype.forEach.call(col.querySelectorAll(".fnode, .sub-card"), (c) => {
+      const r = c.getBoundingClientRect();
+      const x0 = Math.max(r.left, cr.left), x1 = Math.min(r.right, cr.right);
+      const y0 = Math.max(r.top, cr.top), y1 = Math.min(r.bottom, cr.bottom);
+      if (x1 - x0 > 2 && y1 - y0 > 2) cards.push({ node: c.dataset.node || c.className, x0: x0, y0: y0, x1: x1, y1: y1 });
+    });
+  });
+  return { paths: paths, labels: labels, infos: infos, gws: gws, arrows: arrows, cards: cards };
 }
 
 const hitRect = (a, b) => a.x1 > b.x0 + 1 && b.x1 > a.x0 + 1 && a.y1 > b.y0 + 1 && b.y1 > a.y0 + 1;
@@ -861,6 +886,23 @@ function checkFlowGeom(rep, tag) {
     }
   }
   assert.ok(rep.labels.length >= 4, tag + ": 縁ラベルが少ない: " + rep.labels.map((l) => l.text).join("/"));
+  // 7) 通常進行の ▼ はステップ列の中央にある（矢印行だけ幅配分が違うと図全体が左にずれて見える）
+  assert.ok(rep.arrows.length >= 3, tag + ": 通常進行の ▼ 行が少ない: " + rep.arrows.length);
+  for (const A of rep.arrows) {
+    for (const [rel, v] of [["上", A.prev], ["下", A.next]]) {
+      if (v === null) continue;
+      assert.ok(Math.abs(A.cx - v) <= 1,
+        tag + ": ▼ の中心 X がステップ列の中心と違う（" + rel + "行との差 " + (A.cx - v).toFixed(1) + "px）");
+    }
+  }
+  // 8) 縁ラベルは展開中のサイドカード（注釈チップ込み）に重ならない
+  const clash = [];
+  for (const L of rep.labels) {
+    for (const C of rep.cards) {
+      if (hitRect(L, C)) clash.push(L.text + " × " + C.node);
+    }
+  }
+  assert.deepEqual(clash, [], tag + ": 縁ラベルがサイドカードに重なっている");
 }
 
 test("分岐縁は下頂点から出てひし形を横切らない（頂点のみ進入・ラベル重なり 0）", async () => {
@@ -906,6 +948,12 @@ function synthGraph() {
   // API の向こうの格納先を読む縁（サブカード側も 格納先 → API の向きで描く）
   E("step:sync/s3", "boundary:http/sync-api/fetch", "invokes");
   E("boundary:http/sync-api/fetch", "store:table/sync-state", "reads", { access: "read" });
+  // 同じ API・同じ格納先への書き込み（seen の重複除去で片方が消えないこと）
+  E("boundary:http/sync-api/fetch", "store:table/sync-state", "writes", { access: "write" });
+  // 末尾ステップが後方 next（自分自身へのリトライ）だけならフローは終わっていない
+  E("step:sync/s5", "step:sync/s5", "next", { order: 5, label: "リトライ", loop: true });
+  // scan 由来の方向未判定アクセス（詳細パネルで「方向未判定」として出す）
+  E("code:src/sync.ts#run", "store:table/sync-state", "touches", { access: "unknown" });
   const step = (id, name, md) => Object.assign(
     { id: "step:sync/" + id, kind: "step", name: name, parent: "flow:sync", metadata: { provenance: "definition" } },
     md ? { metadata: Object.assign({ provenance: "definition" }, md) } : {});
@@ -920,6 +968,7 @@ function synthGraph() {
       step("s5", "後処理"),
       { id: "store:table/sync-state", kind: "store", name: "sync-state", metadata: { storeKind: "table", provenance: "definition" } },
       { id: "boundary:http/sync-api/fetch", kind: "boundary", name: "sync-api/fetch", metadata: { boundaryKind: "http", provenance: "definition" } },
+      { id: "code:src/sync.ts#run", kind: "code", name: "sync.ts#run", metadata: { path: "src/sync.ts", provenance: "definition" } },
     ],
     edges,
   };
@@ -1137,9 +1186,189 @@ test("合成グラフ: ラベル無し分岐も描く／同一端点の並行縁
   assert.ok(sub, "API の向こうの格納先への reads 縁が無い");
   assert.ok(sub.startInStore && sub.endInBoundary,
     "API の向こうの格納先が 格納先 → API の向きで描かれていない: " + JSON.stringify(sub));
+  // 6) 末尾が後方 next（自己ループ）だけなら「終了」を出さない
+  const terms = (await p.locator("#flow-chart .fc-term-row .term").allInnerTexts()).map((t) => t.trim());
+  assert.ok(terms.includes("開始"), "「開始」の目印が無い: " + JSON.stringify(terms));
+  assert.ok(!terms.includes("終了"),
+    "末尾ステップが自己ループしか持たないフローに「終了」が出ている: " + JSON.stringify(terms));
+  // 7) 同じ API・格納先間の reads / writes はサイド列に 2 枚出る（1 枚に潰れない）
+  const backCards = await p.locator('.fc-side .sub-card[data-node="store:table/sync-state"]').count();
+  assert.ok(backCards >= 2, "API の向こうの同一格納先への reads / writes がカード " + backCards + " 枚に潰れている");
+  assert.equal(await p.locator('#flow-edges path.edge.reads[data-edge="boundary:http/sync-api/fetch|reads|store:table/sync-state"]').count(),
+    1, "API の向こうの格納先への reads 縁が描かれていない");
+  assert.equal(await p.locator('#flow-edges path.edge.writes[data-edge="boundary:http/sync-api/fetch|writes|store:table/sync-state"]').count(),
+    1, "API の向こうの格納先への writes 縁が描かれていない");
+  // 8) 全展開でも縁ラベルはサイドカードに重ならない
+  const openGeom = await p.evaluate(flowGeomAudit);
+  const clash = [];
+  for (const L of openGeom.labels) {
+    for (const C of openGeom.cards) {
+      if (hitRect(L, C)) clash.push(L.text + " × " + C.node);
+    }
+  }
+  assert.deepEqual(clash, [], "全展開で縁ラベルがサイドカードに重なっている");
+  // 9) 方向未判定の access は「方向未判定」として出す（access: unknown を素出ししない）
+  await p.evaluate(() => window.__flowViewer.selectNode("store:table/sync-state"));
+  await p.waitForTimeout(150);
+  const detTxt = await p.locator("#detail-panel").innerText();
+  assert.ok(/方向未判定/.test(detTxt), "方向未判定の touches 縁が「方向未判定」として出ていない: " + detTxt.slice(0, 400));
+  assert.ok(!/access:\s*unknown/.test(detTxt), "metadata.access の unknown を素出ししている");
   assert.deepEqual(errs, [], "合成グラフでコンソールエラー: " + errs.join(" / "));
   await p.screenshot({ path: join(SHOTS, "04-synth-branch.png") });
   await p.close();
+});
+
+test("さらに表示で切れた行の先に後続があれば「終了」を出さない", async () => {
+  const dir = join(OUT, "synth");
+  mkdirSync(dir, { recursive: true });
+  const json = join(dir, "long-synth.json");
+  const html = join(dir, "long-synth.html");
+  const nodes = [{ id: "flow:long", kind: "flow", name: "長いフロー", metadata: { provenance: "definition" } }];
+  const edges = [];
+  const TOTAL = 262; // 初期表示の上限（250）を超える
+  for (let i = 1; i <= TOTAL; i++) {
+    nodes.push({
+      id: "step:long/s" + i, kind: "step", name: "工程 " + i, parent: "flow:long",
+      metadata: { provenance: "definition" },
+    });
+    edges.push({ source: "flow:long", target: "step:long/s" + i, kind: "contains", provenance: "definition", confidence: 1, metadata: { order: i } });
+    if (i > 1) edges.push({ source: "step:long/s" + (i - 1), target: "step:long/s" + i, kind: "next", provenance: "definition", confidence: 1 });
+  }
+  writeFileSync(json, JSON.stringify({
+    schemaVersion: 1, generatedAt: "2026-01-01T00:00:00Z", root: "flow:long", warnings: [], nodes: nodes, edges: edges,
+  }, null, 1));
+  const r = spawnSync(process.execPath,
+    [join(ROOT, "bin", "render.mjs"), "--graph", json, "--out", html, "--title", "表示上限の検査"], { encoding: "utf8" });
+  assert.equal(r.status, 0, "合成グラフの描画に失敗: " + r.stderr);
+  const errs = [];
+  const p = await openFile(html, "#view=flow", errs);
+  await p.waitForSelector(".step-box");
+  await p.waitForTimeout(300);
+  const shown = await p.locator("#flow-chart .fc-row[data-row]").count();
+  assert.ok(shown < TOTAL, "初期表示が上限を超えている: " + shown + "/" + TOTAL);
+  assert.equal(await p.locator("#flow-more-note").count(), 1, "「さらに表示」の注記が無い");
+  const cut = (await p.locator("#flow-chart .fc-term-row .term").allInnerTexts()).map((t) => t.trim());
+  assert.ok(!cut.includes("終了"), "表示上限で切れた行の後ろに「終了」が出ている: " + JSON.stringify(cut));
+  // 全部表示すれば最後の行（後続なし）でのみ「終了」が出る
+  await p.click("#flow-more");
+  await p.waitForTimeout(600);
+  const all = await p.locator("#flow-chart .fc-row[data-row]").count();
+  assert.equal(all, TOTAL, "さらに表示後も全ステップが出ていない: " + all + "/" + TOTAL);
+  const full = (await p.locator("#flow-chart .fc-term-row .term").allInnerTexts()).map((t) => t.trim());
+  assert.ok(full.includes("終了"), "後続の無い末尾行で「終了」が出ていない: " + JSON.stringify(full));
+  assert.deepEqual(errs, [], "合成グラフでコンソールエラー: " + errs.join(" / "));
+  await p.screenshot({ path: join(SHOTS, "06-flow-cap.png") });
+  await p.close();
+});
+
+test("狭い画面（360px）ではフローバーが図に重ならず、図の高さを確保する", async () => {
+  const ctx = await browser.newContext({ viewport: { width: 360, height: 740 }, colorScheme: "dark" });
+  const p = await ctx.newPage();
+  const errs = [];
+  p.on("console", (m) => { if (m.type() === "error") errs.push("[console] " + m.text()); });
+  p.on("pageerror", (e) => errs.push("[pageerror] " + String(e && e.message ? e.message : e)));
+  await p.goto(pathToFileURL(HTML).href + "#view=flow");
+  await p.waitForSelector("#status-bar", { timeout: 15000 });
+  await p.waitForTimeout(400);
+  const m = await p.evaluate(() => {
+    const sc = document.querySelector("#flow-scroll");
+    const bar = document.querySelector("#flow-bar");
+    return {
+      ch: sc.clientHeight, sh: sc.scrollHeight,
+      barH: Math.round(bar.getBoundingClientRect().height),
+      barPos: getComputedStyle(bar).position,
+      pane: Math.round(document.querySelector("#flow-scroll").parentElement.getBoundingClientRect().height),
+    };
+  });
+  assert.ok(m.ch >= 280, "360px で図領域の高さが足りない（" + m.ch + "px / ペイン " + m.pane + "px, バー " + m.barH + "px）");
+  assert.equal(m.barPos, "relative", "狭い画面のフローバーが sticky のまま（図がバーに埋もれる）: " + m.barPos);
+  // 縦スクロールして先頭ボックスを一番上へ寄せてもバーと交差せず、画面内に収まる
+  const hit = await p.evaluate(() => {
+    const box = document.querySelector("#flow-chart .step-box");
+    box.scrollIntoView({ block: "start" });
+    const b = box.getBoundingClientRect();
+    const bar = document.querySelector("#flow-bar").getBoundingClientRect();
+    const sc = document.querySelector("#flow-scroll").getBoundingClientRect();
+    return {
+      hit: b.top < bar.bottom && b.bottom > bar.top,
+      inScroll: b.top >= sc.top - 1 && b.bottom <= sc.bottom + 1,
+      box: [Math.round(b.top), Math.round(b.bottom)],
+    };
+  });
+  assert.equal(hit.hit, false, "先頭のステップボックスがフローバーと交差している: " + JSON.stringify(hit));
+  assert.equal(hit.inScroll, true, "先頭のステップボックスが図領域から見切れている: " + JSON.stringify(hit));
+  assert.deepEqual(errs, [], "360px でコンソールエラー: " + errs.join(" / "));
+  await p.screenshot({ path: join(SHOTS, "05-narrow-360.png") });
+  await ctx.close();
+});
+
+test("読み取り縁の見た目の向きはグラフタブと詳細パネルでも 格納先 → タスク", async () => {
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "dark" });
+  const p = await ctx.newPage();
+  // canvas の moveTo / lineTo を記録して、縁がどちらからどちらへ描かれたかを実測する
+  await p.addInitScript(() => {
+    const proto = window.CanvasRenderingContext2D.prototype;
+    const mt = proto.moveTo, lt = proto.lineTo;
+    window.__segs = [];
+    proto.moveTo = function (x, y) { this.__fx = x; this.__fy = y; return mt.call(this, x, y); };
+    proto.lineTo = function (x, y) {
+      if (window.__segs.length < 400000) window.__segs.push([this.__fx, this.__fy, x, y]);
+      return lt.call(this, x, y);
+    };
+  });
+  const errs = [];
+  p.on("console", (m) => { if (m.type() === "error") errs.push("[console] " + m.text()); });
+  p.on("pageerror", (e) => errs.push("[pageerror] " + String(e && e.message ? e.message : e)));
+  await p.goto(pathToFileURL(HTML).href + "#view=graph");
+  await p.waitForSelector("#status-bar", { timeout: 15000 });
+  await p.waitForFunction(() => window.__flowViewer.graphView.headsDrawn > 0, null, { timeout: 25000 });
+  const cv = await p.evaluate(() => {
+    const gv = window.__flowViewer.graphView;
+    // 物理演算を止めてから描き直し、記録した線分と同じ瞬間の座標で突き合わせる
+    gv.ticking = false;
+    window.__segs.length = 0;
+    gv.draw();
+    const step = gv.pos.get("step:order-intake/receive");
+    const store = gv.pos.get("store:table/order-drafts");
+    const d0 = (q, r) => Math.hypot(q[0] - r.x, q[1] - r.y);
+    const d1 = (q, r) => Math.hypot(q[2] - r.x, q[3] - r.y);
+    const fromStore = window.__segs.filter((q) => d0(q, store) < 2);
+    const fromStep = window.__segs.filter((q) => d0(q, step) < 2);
+    return {
+      fromStore: fromStore.length, fromStep: fromStep.length,
+      storeToStep: fromStore.filter((q) => d1(q, step) < d1(q, store)).length,
+      storeEndsAtStore: fromStep.filter((q) => d1(q, store) < d1(q, step)).length,
+    };
+  });
+  assert.ok(cv.fromStore >= 1, "格納先から出始める読み取り縁が canvas に無い（データ向きで描いている）: " + JSON.stringify(cv));
+  assert.equal(cv.storeToStep, cv.fromStore, "格納先から出た縁がタスク側へ入っていない: " + JSON.stringify(cv));
+  assert.ok(cv.storeEndsAtStore >= 1, "書き込み縁が 格納先 側で終わっていない: " + JSON.stringify(cv));
+  // データ上の向きは step → store のまま（JSON は書き換えていない）
+  const raw = await p.evaluate(() => (window.__flowViewer.state.graph.edges || [])
+    .filter((e) => e.kind === "reads" && e.source === "step:order-intake/receive")
+    .map((e) => e.source + ">" + e.target));
+  assert.deepEqual(raw, ["step:order-intake/receive>store:table/order-drafts"], "JSON 上の reads の向きが変わっている: " + JSON.stringify(raw));
+  // 詳細パネル: ストア側は出力縁、タスク側は入力縁に読み取りが出る
+  await p.evaluate(() => window.__flowViewer.selectNode("store:table/order-drafts"));
+  await p.waitForTimeout(200);
+  const sOut = await p.locator("#detail-edges-out").innerText();
+  const sIn = await p.locator("#detail-edges-in").innerText();
+  assert.ok(/reads/.test(sOut), "ストア詳細の出力縁に読み取りが出ていない: " + sOut.slice(0, 200));
+  assert.ok(!/reads/.test(sIn), "ストア詳細の入力縁に読み取りが混ざっている: " + sIn.slice(0, 200));
+  await p.locator("#detail-edges-out .edge-row").first().click();
+  await p.waitForSelector("#detail-edge");
+  const edgeTxt = await p.locator("#detail-edge").innerText();
+  assert.ok(edgeTxt.indexOf("order_drafts") >= 0 && edgeTxt.indexOf("order_drafts") < edgeTxt.indexOf("注文受信"),
+    "選択中の縁の説明が 格納先 → タスク の順になっていない: " + edgeTxt.slice(0, 200));
+  await p.screenshot({ path: join(SHOTS, "01i-reads-direction.png") });
+  await p.evaluate(() => window.__flowViewer.selectNode("step:order-intake/receive"));
+  await p.waitForTimeout(200);
+  const tOut = await p.locator("#detail-edges-out").innerText();
+  const tIn = await p.locator("#detail-edges-in").innerText();
+  assert.ok(/reads/.test(tIn), "タスク詳細の入力縁に読み取りが出ていない: " + tIn.slice(0, 200));
+  assert.ok(!/reads/.test(tOut), "タスク詳細の出力縁に読み取りが混ざっている: " + tOut.slice(0, 200));
+  assert.deepEqual(errs, [], "グラフタブ / 詳細パネルでコンソールエラー: " + errs.join(" / "));
+  await ctx.close();
 });
 
 test("グラフタブ（canvas）の縁にも終端三角があり、向きは atan2 の実測と一致する", async () => {
@@ -1148,8 +1377,10 @@ test("グラフタブ（canvas）の縁にも終端三角があり、向きは a
   const g = await page.evaluate(() => {
     const gv = window.__flowViewer.graphView;
     const heads = [];
+    const V = window.__flowViewer.visualEnds;
     gv.sim.edges.forEach((e) => {
-      const a = gv.pos.get(e.source), b = gv.pos.get(e.target);
+      const ve = V(e);
+      const a = gv.pos.get(ve[0]), b = gv.pos.get(ve[1]);
       const h = gv.headOf(a, b);
       if (!h) return;
       heads.push({
@@ -1178,8 +1409,13 @@ test("グラフタブ（canvas）の縁にも終端三角があり、向きは a
       return [d[0], d[1], d[2]];
     };
     const out = [];
-    gv.sim.edges.slice(0, 6).forEach((e) => {
-      const a = gv.pos.get(e.source), b = gv.pos.get(e.target);
+    const V = window.__flowViewer.visualEnds;
+    // 分岐 next と読み取り縁を混ぜて検査（読み取りは見た目の向きが反転する）
+    const pick = gv.sim.edges.filter((e) => e.kind === "next").slice(0, 3)
+      .concat(gv.sim.edges.filter((e) => e.kind === "reads").slice(0, 3));
+    pick.forEach((e) => {
+      const ve = V(e);
+      const a = gv.pos.get(ve[0]), b = gv.pos.get(ve[1]);
       const h = gv.headOf(a, b);
       if (!h) return;
       const mx = h.tipX - h.ux * h.len * 0.45, my = h.tipY - h.uy * h.len * 0.45;
@@ -1348,6 +1584,14 @@ test("テーマ: ライトで全タブが読める（コントラスト）＋ラ
   await p.click("#btn-collapse-all");
   await p.waitForTimeout(300);
   await p.screenshot({ path: join(SHOTS, "01-flow-light.png") });
+  // 地色違いでも行の幅配分が変わらないこと（▼ の中央揃えとラベル回避をライトでも同じ検査）
+  checkFlowGeom(await p.evaluate(flowGeomAudit), "ライト・たたんだ状態");
+  await p.click("#btn-expand-all");
+  await p.waitForFunction(() => window.__flowViewer.flowView.edgeItems.length > 0, null, { timeout: 8000 });
+  await p.waitForTimeout(450);
+  checkFlowGeom(await p.evaluate(flowGeomAudit), "ライト・全展開");
+  await p.click("#btn-collapse-all");
+  await p.waitForTimeout(300);
   for (const [tab, shot] of [["stores", "06-stores-light.png"], ["io", "07-io-light.png"], ["code", "08-code-light.png"]]) {
     await p.evaluate((v) => window.__flowViewer.setView(v), tab);
     await p.waitForTimeout(350);
