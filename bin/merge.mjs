@@ -315,7 +315,18 @@ if (opt.flows) {
           addEdge(prev, stepId, "next", { provenance: "definition", confidence: 1, metadata: { order: ord } });
         }
         if (hasBranches) {
+          if (!Array.isArray(step.branches)) {
+            warn(`${file}: ${stepId} の branches が配列ではないので暗黙の次へも張らずにスキップしました`);
+            prev = null;
+            continue;
+          }
           for (const b of step.branches) {
+            // null や to が無い要素で b.to が例外になると、他の正常な分岐ごと生成が止まる。
+            // 契約は「無効な宛先は警告」なので、この分岐だけ捨てて続行する
+            if (typeof b?.to !== "string" || !b.to.trim()) {
+              warn(`${file}: ${stepId} の branches に有効な to がありません（この分岐をスキップ）`);
+              continue;
+            }
             const targetId = `step:${flow.id}/${b.to}`;
             // 前方向（自身含む）への分岐はループ。自身への to は自分自身に戻る縁として残す
             const loop = orderOf.has(targetId) && orderOf.get(targetId) <= ord;

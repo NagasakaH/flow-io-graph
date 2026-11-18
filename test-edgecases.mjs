@@ -284,3 +284,20 @@ test("render: 抜粋の <!-- や <script>、タイトルの $& を壊さず埋�
   const note = parsed.nodes.find((n) => n.id === "store:table/t").metadata.note;
   assert.equal(note, "<!-- 怪しい抜粋 <script>alert(1)</script> -->", "JSON.parse で原文に戻らない");
 });
+
+test("branches の null / 無効 to は警告してその分岐だけ捨て、正常な分岐と暗黙 next 抑止は保つ", () => {
+  const { graph, stderr } = run({
+    "flows/f.json": flowDoc({
+      id: "x",
+      steps: [
+        { id: "a", name: "a", branches: [null, { to: "", label: "空" }, { to: "c", label: "ok" }] },
+        { id: "b", name: "b" },
+        { id: "c", name: "c" },
+      ],
+    }),
+    "scan.json": { schemaVersion: 1, files: [], stores: [], boundaries: [] },
+  });
+  assert.match(stderr, /有効な to がありません/, "無効 branches の警告が出ていない");
+  const nexts = graph.edges.filter((e) => e.kind === "next" && e.source === "step:x/a");
+  assert.deepEqual(nexts.map((e) => e.target), ["step:x/c"], `正常分岐だけが残り暗黙 a→b は張らない: ${JSON.stringify(nexts.map((e) => e.target))}`);
+});
