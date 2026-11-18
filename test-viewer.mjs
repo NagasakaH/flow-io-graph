@@ -60,7 +60,8 @@ before(async () => {
   rmSync(SHOTS, { recursive: true, force: true });
   mkdirSync(SHOTS, { recursive: true });
   browser = await chromium.launch({ executablePath: findBrowser() });
-  context = await browser.newContext({ acceptDownloads: true, viewport: { width: 1500, height: 940 } });
+  // 既存検査は従来どおりダーク描画（ライトは下の別コンテキストで検証する）
+  context = await browser.newContext({ acceptDownloads: true, colorScheme: "dark", viewport: { width: 1500, height: 940 } });
   page = await openPage();
 });
 
@@ -178,9 +179,11 @@ test("前方向ループ（metadata.loop）は左側を回る強調縁と ↺ �
   assert.equal(await loopPath.count(), 1, "retry-gate → receive のループ縁が描画されない");
   const d = await loopPath.getAttribute("d");
   const n = d.match(/[-\d.]+/g).map(Number);
-  const [x1, y1, cx1, , cx2, , x2, y2] = n;
+  const [x1, y1, cx1, , , , x3, y3, x2, y2] = n;
   assert.ok(y2 < y1, "ループ縁が前方向に戻っていない: " + d);
-  assert.ok(cx1 < x1 && cx2 < x2, "ループ縁がレーン左側を回っていない: " + d);
+  assert.ok(cx1 < Math.min(x1, x2) - 6, "ループ縁がレーン左側を回っていない: " + d);
+  assert.ok(x3 === x2 && y3 > y2 + 6, "ループ縁が行き先の下辺へ上向きに届いていない: " + d);
+  assert.equal(await loopPath.getAttribute("data-face"), "up", "ループ縁の入り方向が違う");
   const labels = await page.locator("#flow-edge-labels text.loop").evaluateAll((ts) => ts.map((t) => t.textContent.trim()));
   assert.equal(labels.length, 1, "ループのラベルが無い: " + JSON.stringify(labels));
   assert.match(labels[0], /↺/, "ループラベルに ↺ が無い: " + labels[0]);
@@ -237,9 +240,12 @@ test("ステップをクリックすると入出力が展開され、もう一�
     .evaluateAll((ps) => ps.map((x) => x.getAttribute("d")));
   for (const d2 of ioPaths) {
     const n = d2.match(/[-\d.]+/g).map(Number);
-    const [x1, , cx1, , cx2, , x2] = n;
-    const lo = Math.min(x1, x2) - 1, hi = Math.max(x1, x2) + 1;
+    const [x1, y1, cx1, , cx2, , x3, y3, x2, y2] = n;
+    const allow = Math.max(12, Math.abs(x2 - x1) * 0.5) + 1;
+    const lo = Math.min(x1, x2) - allow, hi = Math.max(x1, x2) + allow;
     assert.ok(cx1 >= lo && cx1 <= hi && cx2 >= lo && cx2 <= hi, "経路が巻き戻っている: " + d2);
+    assert.ok(Math.abs(x2 - x3) + Math.abs(y2 - y3) >= 7, "終点直前が直進していない（矢印が寝て見える）: " + d2);
+    void y1;
   }
   // ⓘ は展開せず詳細パネルだけ開く
   await page.click('#flow-chart .step-box[data-node="step:order-intake/charge"] .info');
@@ -567,6 +573,363 @@ test("hash 復元: #view=graph&flow=...&select=... で開くと選択が戻る",
   await p2.close();
 });
 
+// ============================================================
+//  フェーズ 4: 矢印の向きとテーマ（ライトモード）
+// ============================================================
+const FACE_DEG = { down: 90, up: -90, right: 0, left: 180 };
+function angDiff(a, b) {
+  let d = a - b;
+  while (d > 180) d -= 360;
+  while (d < -180) d += 360;
+  return Math.abs(d);
+}
+function rgbOf(c) {
+  const t = String(c).trim();
+  const h = t.match(/^#([0-9a-f]{6})[0-9a-f]{0,2}$/i);
+  if (h) return [0, 2, 4].map((i) => parseInt(h[1].slice(i, i + 2), 16));
+  const m = t.match(/[\d.]+/g);
+  return m && m.length >= 3 ? m.slice(0, 3).map(Number) : null;
+}
+function lum(c) {
+  const m = rgbOf(c);
+  if (!m) return 0;
+  const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  return 0.2126 * f(m[0]) + 0.7152 * f(m[1]) + 0.0722 * f(m[2]);
+}
+function contrast(a, b) {
+  const la = lum(a), lb = lum(b);
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+}
+// テーマ検証用のページ（prefers-color-scheme と localStorage を外から制御する）
+async function openThemed(colorScheme, hash) {
+  const ctx = await browser.newContext({ colorScheme, viewport: { width: 1440, height: 900 } });
+  const p = await ctx.newPage();
+  p.on("console", (m) => { if (m.type() === "error") consoleErrors.push("[light console] " + m.text()); });
+  p.on("pageerror", (e) => consoleErrors.push("[light pageerror] " + String(e && e.message ? e.message : e)));
+  await p.goto(pathToFileURL(HTML).href + (hash || ""));
+  await p.waitForSelector("#status-bar", { timeout: 15000 });
+  return { ctx, p };
+}
+const themeState = (p) => p.evaluate(() => {
+  let stored = "ERR";
+  try { stored = localStorage.getItem("flow-theme"); } catch (e) { /* ignore */ }
+  const btn = document.querySelector("#btn-theme");
+  return {
+    theme: document.documentElement.dataset.theme,
+    mode: document.documentElement.dataset.themeMode,
+    btn: btn ? btn.textContent : "",
+    stored,
+  };
+});
+
+test("縁の三角は終端接線と同じ向き（▼・分岐・ループ・展開時 I/O）", async () => {
+  await page.evaluate(() => window.__flowViewer.setView("flow"));
+  await page.click("#btn-expand-all");
+  await page.waitForFunction(() => window.__flowViewer.flowView.edgeItems.length > 0, null, { timeout: 8000 });
+  await page.waitForTimeout(400);
+  // マーカーは orient="auto"（手書きポリゴンを回していないか）
+  const marks = await page.evaluate(() => Array.prototype.map.call(
+    document.querySelectorAll("#flow-edges marker"), (m) => m.getAttribute("orient")));
+  assert.ok(marks.length >= 4, "マーカー定義が少ない: " + marks.join(","));
+  assert.ok(marks.every((o) => o === "auto"), "orient=auto でないマーカーがある: " + marks.join(","));
+  // ▼: 軸の終端接線と三角の向き
+  const dn = await page.evaluate(() => {
+    const stem = document.querySelector(".fc-arrow-svg path[data-arrow='stem']");
+    const head = document.querySelector(".fc-arrow-svg path[data-arrow='head']");
+    if (!stem || !head) return null;
+    const L = stem.getTotalLength();
+    const a = stem.getPointAtLength(L), b = stem.getPointAtLength(Math.max(0, L - 4));
+    const p = head.getAttribute("d").match(/-?[\d.]+/g).map(Number);
+    return {
+      arrows: document.querySelectorAll(".fc-arrow-svg").length,
+      stem: Math.atan2(a.y - b.y, a.x - b.x) * 180 / Math.PI,
+      head: Math.atan2(p[5] - (p[1] + p[3]) / 2, p[4] - (p[0] + p[2]) / 2) * 180 / Math.PI,
+    };
+  });
+  assert.ok(dn && dn.arrows === 3, "▼ が SVG 矢印として 3 本描画されていない: " + JSON.stringify(dn));
+  assert.ok(angDiff(dn.stem, dn.head) <= 10, "▼ の軸と三角の向きがズレている: " + JSON.stringify(dn));
+  assert.ok(angDiff(dn.head, 90) <= 10, "▼ が真下を向いていない: " + dn.head);
+  // 各縁: 実パスの終端接線を getPointAtLength で測り、三角の向き（data-tan）と入る辺の法線へ照合
+  const rows = await page.locator("#flow-edges path.edge[data-tan]").evaluateAll((ps) => ps.map((el) => {
+    const L = el.getTotalLength();
+    const a = el.getPointAtLength(L), b = el.getPointAtLength(Math.max(0, L - 6));
+    return {
+      edge: el.dataset.edge, face: el.dataset.face, tan: Number(el.dataset.tan),
+      meas: Math.atan2(a.y - b.y, a.x - b.x) * 180 / Math.PI,
+    };
+  }));
+  assert.ok(rows.length >= 12, "角度を比較できる縁が少ない: " + rows.length);
+  const kinds = new Set();
+  for (const r of rows) {
+    kinds.add(r.edge.split("|")[1]);
+    assert.ok(angDiff(r.tan, r.meas) <= 10, "三角の向きと実パスの終端接線が食い違う: " + JSON.stringify(r));
+    assert.ok(angDiff(r.meas, FACE_DEG[r.face]) <= 10, "三角が入る辺の法線を向いていない: " + JSON.stringify(r));
+  }
+  assert.ok(kinds.has("next"), "分岐／ループ縁の角度を検査できない");
+  assert.ok(["reads", "writes", "invokes"].some((k) => kinds.has(k)), "I/O 縁の角度を検査できない: " + [...kinds].join(","));
+  // 直線 ▼ とは別に、曲線縁（分岐）の角度も個別に確認しておく
+  const br = rows.find((r) => r.face === "down");
+  assert.ok(br, "上辺へ入る分岐縁が無い");
+  await page.screenshot({ path: join(SHOTS, "01f-arrow-angle.png") });
+  await page.click("#btn-collapse-all");
+  await page.waitForTimeout(250);
+});
+
+test("グラフタブ（canvas）の縁にも終端三角があり、向きは atan2 の実測と一致する", async () => {
+  await page.evaluate(() => window.__flowViewer.setView("graph"));
+  await page.waitForFunction(() => window.__flowViewer.graphView.headsDrawn > 0, null, { timeout: 20000 });
+  const g = await page.evaluate(() => {
+    const gv = window.__flowViewer.graphView;
+    const heads = [];
+    gv.sim.edges.forEach((e) => {
+      const a = gv.pos.get(e.source), b = gv.pos.get(e.target);
+      const h = gv.headOf(a, b);
+      if (!h) return;
+      heads.push({
+        ang: h.ang, indep: Math.atan2(b.y - a.y, b.x - a.x), kind: e.kind,
+        rim: Math.hypot(h.tipX - b.x, h.tipY - b.y), radius: gv.radius(b),
+      });
+    });
+    return { drawn: gv.headsDrawn, total: gv.sim.edges.length, heads };
+  });
+  assert.ok(g.heads.length >= Math.floor(g.total * 0.8), "三角を作れない縁が多すぎる: " + g.heads.length + "/" + g.total);
+  assert.ok(g.drawn >= Math.floor(g.total * 0.8), "canvas に描画された三角が少ない: " + g.drawn + "/" + g.total);
+  for (const h of g.heads) {
+    assert.ok(Math.abs(h.ang - h.indep) < 1e-9, "三角の角度が終端接線と違う: " + JSON.stringify(h));
+    assert.ok(Math.abs(h.rim - h.radius) <= 3, "三角の頂点がノードの縁についていない: " + JSON.stringify(h));
+  }
+  // ピクセル検査: 三角の内部にはインクがあり、その横（三角の外）は地色
+  const px = await page.evaluate(() => {
+    const gv = window.__flowViewer.graphView;
+    const cv = document.querySelector("#graph-canvas");
+    const ctx = cv.getContext("2d");
+    const at = (wx, wy) => {
+      const x = Math.round(gv.dpr * (gv.view.x + gv.view.k * wx));
+      const y = Math.round(gv.dpr * (gv.view.y + gv.view.k * wy));
+      if (x < 0 || y < 0 || x >= cv.width || y >= cv.height) return null;
+      const d = ctx.getImageData(x, y, 1, 1).data;
+      return [d[0], d[1], d[2]];
+    };
+    const out = [];
+    gv.sim.edges.slice(0, 6).forEach((e) => {
+      const a = gv.pos.get(e.source), b = gv.pos.get(e.target);
+      const h = gv.headOf(a, b);
+      if (!h) return;
+      const mx = h.tipX - h.ux * h.len * 0.45, my = h.tipY - h.uy * h.len * 0.45;
+      const inside = at(mx, my);
+      const off = h.wid + 7;
+      const side = [at(mx - h.uy * off, my + h.ux * off), at(mx + h.uy * off, my - h.ux * off)];
+      const far = side.filter(Boolean).sort((u, v) => Math.hypot(v[0] - inside[0], v[1] - inside[1]) -
+        Math.hypot(u[0] - inside[0], u[1] - inside[1]))[0];
+      if (inside && far) out.push({ kind: e.kind, d: Math.hypot(inside[0] - far[0], inside[1] - far[1]) });
+    });
+    return out;
+  });
+  assert.ok(px.length >= 3, "ピクセル検査できる縁が少ない: " + px.length);
+  for (const q of px) {
+    assert.ok(q.d > 14, "三角が描画されていない（頂点付近が地色と同じ）: " + JSON.stringify(q));
+  }
+  await page.screenshot({ path: join(SHOTS, "02c-graph-arrows.png") });
+});
+
+test("テーマ: prefers-color-scheme 追従 → 3 態トグル → localStorage flow-theme", async () => {
+  const dk = await openThemed("dark");
+  assert.deepEqual(await themeState(dk.p), { theme: "dark", mode: "system", btn: "◐ システム", stored: null },
+    "保存値なし / prefers dark の初期状態が違う");
+  await dk.ctx.close();
+
+  const lt = await openThemed("light");
+  assert.equal((await themeState(lt.p)).theme, "light", "prefers-color-scheme: light に追従していない");
+  // 注釈（flow-annotations）を 1 件置いて、テーマ切替が混入しないことを確認する
+  const annSeed = JSON.stringify({ nodes: { "flow:order-intake": { note: "テーマ検査" } }, edges: [] });
+  await lt.p.evaluate((v) => localStorage.setItem("flow-annotations", v), annSeed);
+
+  await lt.p.click("#btn-theme");
+  let st = await themeState(lt.p);
+  assert.equal(st.mode, "dark", "1 回目のクリックがダークにならない");
+  assert.equal(st.theme, "dark", "ライト設定でも保存値ダークが適用されない");
+  assert.equal(st.stored, "dark", "localStorage flow-theme に保存されていない");
+  assert.match(st.btn, /☾/);
+
+  await lt.p.click("#btn-theme");
+  st = await themeState(lt.p);
+  assert.deepEqual({ mode: st.mode, theme: st.theme, stored: st.stored }, { mode: "light", theme: "light", stored: "light" });
+  assert.match(st.btn, /☀/);
+
+  await lt.p.click("#btn-theme");
+  st = await themeState(lt.p);
+  assert.deepEqual({ mode: st.mode, theme: st.theme, stored: st.stored }, { mode: "system", theme: "light", stored: "system" },
+    "3 態目システムで prefers-color-scheme に戻らない");
+  assert.match(st.btn, /◐/);
+
+  // テーマ切替は注釈に触れない（保存キーが別 / 注釈 JSON に theme を混ぜない）
+  assert.equal(await lt.p.evaluate(() => localStorage.getItem("flow-annotations")), annSeed);
+  const doc = JSON.parse(await lt.p.evaluate(() => localStorage.getItem("flow-annotations")));
+  assert.ok(!("theme" in doc), "注釈ドキュメントに theme が混入している: " + Object.keys(doc).join(","));
+
+  // 次回起動: 保存値が prefers-color-scheme より優先
+  await lt.p.evaluate(() => localStorage.setItem("flow-theme", "dark"));
+  await lt.p.reload();
+  await lt.p.waitForSelector("#status-bar", { timeout: 15000 });
+  st = await themeState(lt.p);
+  assert.equal(st.theme, "dark", "保存値が prefers-color-scheme に勝っていない");
+  assert.equal(st.mode, "dark");
+  // 保存値をクリアすればシステム追従に戻る
+  await lt.p.evaluate(() => {
+    localStorage.removeItem("flow-theme");
+    history.replaceState(null, "", location.href.split("#")[0]); // hash の theme= は保存値より優先なので消す
+  });
+  await lt.p.reload();
+  await lt.p.waitForSelector("#status-bar", { timeout: 15000 });
+  st = await themeState(lt.p);
+  assert.equal(st.theme, "light", "保存値クリア後にシステム追従へ戻っていない");
+  await lt.ctx.close();
+});
+
+test("テーマ: hash の theme= で共有（システム時は載せない）、トグルで保存値が優先", async () => {
+  const dk = await openThemed("dark");
+  // 既定（システム）の共有 URL には theme を載せない
+  await dk.p.click("#btn-share");
+  assert.doesNotMatch(await dk.p.getAttribute("#btn-share", "data-url"), /theme=/,
+    "システム時の共有 URL に theme が入っている");
+  // hash で直接ライト
+  await dk.p.evaluate(() => { location.hash = "#view=flow&theme=light"; });
+  await dk.p.waitForFunction(() => document.documentElement.dataset.theme === "light", null, { timeout: 5000 });
+  assert.equal((await themeState(dk.p)).mode, "light");
+  await dk.p.click("#btn-share");
+  const url = await dk.p.getAttribute("#btn-share", "data-url");
+  assert.match(url, /theme=light/, "ライト共有 URL に theme が無い: " + url);
+  // hash で開いたページ（保存値なし）もライトになる
+  const t = await openThemed("dark", "#view=flow&theme=light");
+  assert.equal((await themeState(t.p)).theme, "light", "hash の theme=light が効いていない");
+  assert.equal(await t.p.evaluate(() => localStorage.getItem("flow-theme")), null,
+    "hash 適用が localStorage に書き込まれている");
+  // hash で light 表示していても、トグルは 3 態の順（light → system → dark）で進む
+  await t.p.click("#btn-theme");
+  let ts = await themeState(t.p);
+  assert.equal(ts.mode, "system", "light の次がシステムにならない");
+  assert.equal(ts.stored, "system");
+  assert.equal(ts.theme, "dark", "システムに戻れば prefers-color-scheme: dark のはず");
+  await t.p.click("#btn-share");
+  assert.doesNotMatch(await t.p.getAttribute("#btn-share", "data-url"), /theme=/,
+    "システムに戻ったのに hash に theme が残る: " + await t.p.getAttribute("#btn-share", "data-url"));
+  await t.p.click("#btn-theme");   // system → dark
+  assert.equal((await themeState(t.p)).mode, "dark");
+  await t.p.click("#btn-share");
+  assert.match(await t.p.getAttribute("#btn-share", "data-url"), /theme=dark/);
+  await t.p.reload();
+  await t.p.waitForSelector("#status-bar", { timeout: 15000 });
+  ts = await themeState(t.p);
+  assert.equal(ts.theme, "dark", "保存値（または hash）が次回起動で適用されない");
+  assert.equal(ts.mode, "dark");
+  await dk.ctx.close();
+  await t.ctx.close();
+});
+
+test("テーマ: ライトで全タブが読める（コントラスト）＋ライト版スクリーンショット", async () => {
+  const { ctx, p } = await openThemed("light");
+  assert.equal(await p.evaluate(() => document.documentElement.dataset.theme), "light");
+  const vars = await p.evaluate(() => {
+    const cs = getComputedStyle(document.documentElement);
+    const g = (n) => cs.getPropertyValue(n).trim();
+    return {
+      bg: g("--bg"), bg2: g("--bg2"), fg: g("--fg"), muted: g("--muted"), dim: g("--dim"),
+      reads: g("--e-reads"), writes: g("--e-writes"), invokes: g("--e-invokes"),
+      next: g("--e-next"), loop: g("--e-loop"), cont: g("--e-cont"),
+      warn: g("--warn"), accent: g("--accent"), store: g("--k-store"), boundary: g("--k-boundary"),
+      canvasA: g("--canvas-a"), llmBd: g("--pv-llm-bd"), humBd: g("--pv-hum-bd"),
+      halo: g("--halo"), scheme: cs.colorScheme,
+    };
+  });
+  assert.equal(vars.scheme, "light", "color-scheme が light でない（フォーム控件が黒いまま）");
+  assert.ok(lum(vars.bg) > 0.7 && lum(vars.bg2) > 0.7, "地色が明るくない: " + vars.bg + " / " + vars.bg2);
+  assert.ok(contrast(vars.bg2, vars.fg) >= 6, "本文文字のコントラスト不足: " + vars.fg);
+  assert.ok(contrast(vars.bg2, vars.muted) >= 3.5, "補助文字のコントラスト不足: " + vars.muted);
+  // 縁色 5 種＋破線（contains）は白地で沈まない色に調整してある
+  for (const k of ["reads", "writes", "invokes", "next", "loop"]) {
+    assert.ok(contrast(vars.bg2, vars[k]) >= 2.8, "ライトの縁色が地色に沈む: " + k + "=" + vars[k]);
+  }
+  // contains は構造の骨格として淡く見せる設計（ダークでも最も薄い色）
+  assert.ok(contrast(vars.bg2, vars.cont) >= 2 && contrast(vars.bg2, vars.cont) < 3.2,
+    "contains 縁の濃度が設計範囲外: " + vars.cont);
+  // クロスハイライトの琥珀・候補バンド・注釈 badges・グラフ地色
+  assert.ok(contrast(vars.bg2, vars.warn) >= 3.5, "クロスハイライトの琥珀が読めない: " + vars.warn);
+  assert.ok(contrast(vars.bg2, vars.store) >= 3, "格納先の色が読めない: " + vars.store);
+  assert.ok(contrast(vars.bg2, vars.boundary) >= 3, "境界の色が読めない: " + vars.boundary);
+  // 注釈 badge は「文字が読める + 地色より明らかな淡色背景」で判定する（枠線は意図的に淡い）
+  const badges = await p.evaluate(() => {
+    const cs = getComputedStyle(document.documentElement);
+    const g = (n) => cs.getPropertyValue(n).trim();
+    return { llmFg: g("--pv-llm-fg"), llmBg: g("--pv-llm-bg"), humFg: g("--pv-hum-fg"), humBg: g("--pv-hum-bg") };
+  });
+  assert.ok(contrast(vars.bg2, badges.llmFg) >= 3.5 && contrast(vars.bg2, badges.humFg) >= 3.5,
+    "注釈 badge の文字が読めない: " + JSON.stringify(badges));
+  for (const k of ["llmBg", "humBg"]) {
+    assert.ok(contrast(vars.bg2, badges[k]) >= 1.12 && lum(badges[k]) < lum(vars.bg2),
+      "注釈 badge の背景が地色と同化: " + k + "=" + badges[k]);
+  }
+  void vars.llmBd; void vars.humBd;
+  assert.ok(lum(vars.canvasA) > 0.7, "グラフタブの地色がダークのまま: " + vars.canvasA);
+  // ラベルのハローも白に（ダーク用 #0b1016 のままなら不合格）
+  assert.ok(lum(vars.halo) > 0.7, "ラベルのハローがダーク用: " + vars.halo);
+
+  await p.evaluate(() => window.__flowViewer.setView("flow"));
+  await p.click("#btn-expand-all");
+  await p.waitForFunction(() => window.__flowViewer.flowView.edgeItems.length > 0, null, { timeout: 8000 });
+  await p.waitForTimeout(450);
+  await p.screenshot({ path: join(SHOTS, "01b-flow-light-expanded.png") });
+  await p.click("#btn-collapse-all");
+  await p.waitForTimeout(300);
+  await p.screenshot({ path: join(SHOTS, "01-flow-light.png") });
+  for (const [tab, shot] of [["stores", "06-stores-light.png"], ["io", "07-io-light.png"], ["code", "08-code-light.png"]]) {
+    await p.evaluate((v) => window.__flowViewer.setView(v), tab);
+    await p.waitForTimeout(350);
+    await p.screenshot({ path: join(SHOTS, shot) });
+  }
+  // 詳細パネル（注釈フォーム）もライト地色
+  await p.evaluate(() => window.__flowViewer.setView("flow"));
+  await p.waitForTimeout(250);
+  await p.click('#flow-chart .step-box[data-node="step:order-intake/charge"] .info');
+  await p.waitForSelector("#detail-panel .dt-name");
+  const form = await p.evaluate(() => {
+    const box = document.querySelector("#detail-panel");
+    const inp = box.querySelector("input, textarea");
+    return {
+      bg: getComputedStyle(box).backgroundColor,
+      color: getComputedStyle(box.querySelector(".dt-name")).color,
+      input: inp ? getComputedStyle(inp).backgroundColor : null,
+    };
+  });
+  assert.ok(lum(form.bg) > 0.7, "詳細パネルがダークのまま: " + form.bg);
+  assert.ok(contrast(form.bg, form.color) >= 6, "詳細パネルの文字コントラスト不足");
+  if (form.input) assert.ok(lum(form.input) > 0.65, "注釈フォームの入力欄がダークのまま: " + form.input);
+  await p.screenshot({ path: join(SHOTS, "03-detail-light.png") });
+  // グラフタブ（canvas）の地色とラベル
+  await p.evaluate(() => window.__flowViewer.setView("graph"));
+  await p.waitForFunction(() => window.__flowViewer.graphView.headsDrawn > 0, null, { timeout: 20000 });
+  await p.waitForTimeout(300);
+  const bgpx = await p.evaluate(() => {
+    const cv = document.querySelector("#graph-canvas");
+    const d = cv.getContext("2d").getImageData(3, 3, 1, 1).data;
+    return { a: d[3], rgb: "rgb(" + d[0] + "," + d[1] + "," + d[2] + ")", css: getComputedStyle(cv).backgroundImage };
+  });
+  // canvas の bitmap は透明で CSS の地色勾配を見せるので、見える地色は CSS 側で判定する
+  assert.ok(bgpx.a === 0 || lum(bgpx.rgb) > 0.7, "canvas の bitmap が暗い地色で塗られている: " + JSON.stringify(bgpx));
+  const ground = String(bgpx.css).match(/rgba?\([^)]*\)/);
+  assert.ok(ground, "グラフタブの地色勾配が読めない: " + bgpx.css);
+  assert.ok(lum(ground[0]) > 0.7, "グラフタブの地色がダークのまま: " + ground[0]);
+  await p.screenshot({ path: join(SHOTS, "02-graph-light.png") });
+  // 未紐づけ候補バンド
+  await p.evaluate(() => window.__flowViewer.setView("flow"));
+  await p.waitForTimeout(250);
+  const band = await p.evaluate(() => {
+    const b = document.querySelector("#candidate-band .sub-card, #candidate-band .cand");
+    return b ? getComputedStyle(b).backgroundColor : null;
+  });
+  if (band) assert.ok(lum(band) > 0.6, "候補バンドがダークのまま: " + band);
+  await ctx.close();
+});
+
 test("ローカル注釈をクリアするとグラフが埋め込みデータに戻る", async () => {
   page.on("dialog", (d) => d.accept());
   await page.evaluate(() => window.__flowViewer.setView("flow"));
@@ -580,8 +943,10 @@ test("ローカル注釈をクリアするとグラフが埋め込みデータ�
   await page.screenshot({ path: join(SHOTS, "05-flow-clean.png") });
   assert.ok(existsSync(join(SHOTS, "01-flow.png")));
   const shots = readdirSync(SHOTS).filter((f) => f.endsWith(".png"));
-  assert.ok(shots.length >= 8, "スクリーンショットが足りない: " + shots.join(", "));
-  for (const need of ["01-flow.png", "01b-flow-expanded.png", "01d-loop.png", "01e-gateway.png"]) {
+  assert.ok(shots.length >= 15, "スクリーンショットが足りない: " + shots.join(", "));
+  for (const need of ["01-flow.png", "01b-flow-expanded.png", "01d-loop.png", "01e-gateway.png",
+    "01-flow-light.png", "01b-flow-light-expanded.png", "02-graph-light.png", "06-stores-light.png",
+    "07-io-light.png", "08-code-light.png", "02c-graph-arrows.png"]) {
     assert.ok(shots.includes(need), "必須のスクリーンショットが無い: " + need);
   }
 });

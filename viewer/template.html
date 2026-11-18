@@ -34,7 +34,27 @@
   --e-writes: #f0883e;
   --e-invokes: #bc8cff;
   --e-next: #3fb950;
+  color-scheme: dark;
   --e-loop: #ff7b72;
+  /* --- 面・UI 色（ライトテーマで差し替える） --- */
+  --bg-panel: #0f151d; --bg-head: #101720; --bg-hover: #1c2734; --bg-sel: #17293f;
+  --bg-sub: #141b23; --bg-dash: #191f27; --bg-open: #16202c; --bg-gw: #151d29; --bg-gw-open: #1a2534;
+  --bg-row: #131a22; --bg-form: #121922; --bg-chip: #1b2431;
+  --hdr-a: #161d26; --hdr-b: #10161e; --scroll-thumb: #2b3644; --halo: #0b1016;
+  --shadow-pop: 0 12px 30px rgba(0, 0, 0, .55);
+  --btn-pri-bg: #1f6feb; --btn-pri-hi: #388bfd; --btn-pri-fg: #ffffff;
+  --accent-soft: rgba(88, 166, 255, .16); --accent-glow: rgba(88, 166, 255, .55);
+  --fade-a: rgba(11, 16, 23, .86); --fade-b: rgba(11, 16, 23, 0);
+  --canvas-a: #131c26; --canvas-b: #0b1017; --hud-bg: rgba(16, 24, 34, .8);
+  --cv-label: #c7d2de; --cv-label-sel: #f0f6fc; --cv-ring: #f0f6fc; --cv-halo: rgba(8, 12, 18, .85);
+  --e-impl: #6e7681; --e-touch: #4d5866; --e-cont: #39424e; --e-default: #4d5866;
+  --warn-fg: #e8b34b; --warn-bd: #7a5c1a; --warn-bg: #2b2211;
+  --danger-fg: #ff9a8c; --danger-bd: #7d3b34; --danger-bg: #2d1a17;
+  --pv-def-fg: #7ee787; --pv-def-bd: #2ea04366; --pv-def-bg: #12261a;
+  --pv-sta-fg: #9aa7b4; --pv-sta-bd: #4b5563aa; --pv-sta-bg: #1b2129;
+  --pv-llm-fg: #d2a8ff; --pv-llm-bd: #8957e566; --pv-llm-bg: #241a33;
+  --pv-hum-fg: #79c0ff; --pv-hum-bd: #1f6feb66; --pv-hum-bg: #12233c;
+  --loop-fg: #ff8f85; --loop-bd: #7d3a35; --loop-bg: #3a1d1d;
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 [data-kind="flow"] { --kc: var(--k-flow); }
@@ -60,14 +80,14 @@ button { cursor: pointer; }
 a { color: var(--accent); }
 code, .mono { font-family: var(--mono); font-size: 11.5px; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: #2b3644; border-radius: 6px; }
+::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 
 /* ---------- ヘッダ ---------- */
 header.top {
   flex: 0 0 auto;
   border-bottom: 1px solid var(--line);
-  background: linear-gradient(180deg, #161d26, #10161e);
+  background: linear-gradient(180deg, var(--hdr-a), var(--hdr-b));
   padding: 8px 14px 7px;
 }
 .top-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -91,8 +111,8 @@ select:focus, input:focus { border-color: var(--accent); }
   white-space: nowrap;
 }
 .btn:hover { border-color: var(--accent); }
-.btn.primary { background: #1f6feb; border-color: #1f6feb; color: #fff; }
-.btn.primary:hover { background: #388bfd; }
+.btn.primary { background: var(--btn-pri-bg); border-color: var(--btn-pri-bg); color: var(--btn-pri-fg); }
+.btn.primary:hover { background: var(--btn-pri-hi); }
 .btn.ghost { background: transparent; color: var(--muted); }
 .btn.danger:hover { border-color: var(--danger); color: var(--danger); }
 .btn.small { padding: 2px 7px; font-size: 11.5px; }
@@ -107,17 +127,17 @@ select:focus, input:focus { border-color: var(--accent); }
   position: absolute; z-index: 60; top: calc(100% + 4px); left: 0; right: 0;
   max-height: 340px; overflow: auto;
   background: var(--bg2); border: 1px solid var(--line); border-radius: 8px;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, .55);
+  box-shadow: 0 12px 30px var(--shadow-pop);
   display: none;
 }
 #search-results.open { display: block; }
 .sr-item { padding: 6px 9px; border-bottom: 1px solid var(--line-soft); cursor: pointer; }
 .sr-item:last-child { border-bottom: 0; }
-.sr-item:hover, .sr-item.active { background: #1c2734; }
+.sr-item:hover, .sr-item.active { background: var(--bg-hover); }
 .sr-name { display: flex; align-items: center; gap: 6px; }
 .sr-id { color: var(--dim); font-family: var(--mono); font-size: 10.5px; word-break: break-all; }
 .sr-note { color: var(--dim); font-size: 11px; }
-.sr-head { padding: 5px 9px; color: var(--dim); font-size: 11px; background: #101720; }
+.sr-head { padding: 5px 9px; color: var(--dim); font-size: 11px; background: var(--bg-head); }
 
 /* ---------- フィルタ chips ---------- */
 .filter-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 7px; }
@@ -135,7 +155,7 @@ select:focus, input:focus { border-color: var(--accent); }
 .chip.on {
   color: var(--fg);
   border-color: var(--kc, var(--accent));
-  background: rgba(88, 166, 255, .16);
+  background: var(--accent-soft);
   background: color-mix(in srgb, var(--kc, var(--accent)) 24%, transparent);
 }
 .chip:hover { border-color: var(--kc, var(--accent)); }
@@ -143,7 +163,7 @@ select:focus, input:focus { border-color: var(--accent); }
 .toggle.on { color: var(--warn); }
 
 /* ---------- タブ ---------- */
-nav.tabs { display: flex; gap: 2px; padding: 0 14px; border-bottom: 1px solid var(--line); background: #0f151d; flex: 0 0 auto; }
+nav.tabs { display: flex; gap: 2px; padding: 0 14px; border-bottom: 1px solid var(--line); background: var(--bg-panel); flex: 0 0 auto; }
 .tab-btn {
   background: transparent; border: 0; border-bottom: 2px solid transparent;
   color: var(--muted); padding: 7px 12px 6px; font-size: 12.5px;
@@ -173,7 +193,7 @@ aside.detail {
 footer.status {
   flex: 0 0 auto;
   border-top: 1px solid var(--line);
-  background: #0f151d;
+  background: var(--bg-panel);
   color: var(--muted);
   font-size: 11.5px;
   padding: 4px 14px;
@@ -187,17 +207,17 @@ footer.status .dot { color: var(--dim); }
 /* ---------- 共通の小さな部品 ---------- */
 .badge {
   display: inline-block; border-radius: 4px; padding: 0 5px; font-size: 10.5px;
-  line-height: 1.65; border: 1px solid var(--line); color: var(--muted); background: #0f151d;
+  line-height: 1.65; border: 1px solid var(--line); color: var(--muted); background: var(--bg-panel);
   white-space: nowrap;
 }
-.badge.cand { color: var(--warn); border-color: #6a5320; background: #2a2110; }
-.badge.empty-io { color: #e8b34b; border-color: #7a5c1a; background: #2b2211; }
-.badge.nullref { color: #ff9a8c; border-color: #7d3b34; background: #2d1a17; }
+.badge.cand { color: var(--warn); border-color: var(--warn-bd); background: var(--warn-bg); }
+.badge.empty-io { color: var(--warn-fg); border-color: var(--warn-bd); background: var(--warn-bg); }
+.badge.nullref { color: var(--danger-fg); border-color: var(--danger-bd); background: var(--danger-bg); }
 .pv { display: inline-block; border-radius: 4px; padding: 0 5px; font-size: 10.5px; line-height: 1.65; border: 1px solid; }
-.pv-definition { color: #7ee787; border-color: #2ea04366; background: #12261a; }
-.pv-static { color: #9aa7b4; border-color: #4b5563aa; background: #1b2129; }
-.pv-llm { color: #d2a8ff; border-color: #8957e566; background: #241a33; }
-.pv-human { color: #79c0ff; border-color: #1f6feb66; background: #12233c; }
+.pv-definition { color: var(--pv-def-fg); border-color: var(--pv-def-bd); background: var(--pv-def-bg); }
+.pv-static { color: var(--pv-sta-fg); border-color: var(--pv-sta-bd); background: var(--pv-sta-bg); }
+.pv-llm { color: var(--pv-llm-fg); border-color: var(--pv-llm-bd); background: var(--pv-llm-bg); }
+.pv-human { color: var(--pv-hum-fg); border-color: var(--pv-hum-bd); background: var(--pv-hum-bg); }
 .kind-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--kc, var(--dim)); display: inline-block; flex: 0 0 auto; }
 .kind-label { color: var(--kc, var(--muted)); font-size: 10.5px; }
 .muted { color: var(--muted); }
@@ -214,12 +234,12 @@ footer.status .dot { color: var(--dim); }
 
 table.grid { width: 100%; border-collapse: collapse; font-size: 12px; }
 table.grid th, table.grid td { border-bottom: 1px solid var(--line-soft); padding: 5px 7px; text-align: left; vertical-align: top; }
-table.grid th { color: var(--dim); font-weight: 600; font-size: 11.5px; background: #101720; position: sticky; top: 0; z-index: 3; }
+table.grid th { color: var(--dim); font-weight: 600; font-size: 11.5px; background: var(--bg-head); position: sticky; top: 0; z-index: 3; }
 table.grid th.sortable { cursor: pointer; user-select: none; }
 table.grid th.sortable:hover { color: var(--fg); }
 table.grid th .arrow { color: var(--accent); }
-table.grid tbody tr:hover { background: #17202b; }
-table.grid tbody tr.sel { background: #17293f; }
+table.grid tbody tr:hover { background: var(--bg-hover); }
+table.grid tbody tr.sel { background: var(--bg-sel); }
 /* td 自体を flex にすると table の列レイアウトが壊れるので、子は block で積む */
 .cell-names .n { display: block; cursor: pointer; line-height: 1.6; }
 .cell-names .n:hover { color: var(--accent); }
@@ -230,7 +250,7 @@ table.grid tbody tr.sel { background: #17293f; }
 .flow-bar {
   position: sticky; top: 0; z-index: 4; display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
   font-size: 11px; color: var(--muted); padding: 7px 6px 9px;
-  background: linear-gradient(180deg, var(--bg) 68%, rgba(11,16,23,.86) 88%, rgba(11,16,23,0));
+  background: linear-gradient(180deg, var(--bg) 68%, var(--fade-a) 88%, var(--fade-b));
   border-bottom: 1px solid var(--line-soft);
 }
 .flow-bar .hintline { color: var(--dim); }
@@ -250,10 +270,13 @@ table.grid tbody tr.sel { background: #17293f; }
 #flow-edge-labels { position: absolute; inset: 0; pointer-events: none; z-index: 3; overflow: visible; }
 #flow-edge-labels text {
   font-size: 10.5px; font-weight: 650; dominant-baseline: middle;
-  paint-order: stroke; stroke: #0b1016; stroke-width: 4px; stroke-linejoin: round;
+  paint-order: stroke; stroke: var(--halo); stroke-width: 4px; stroke-linejoin: round;
 }
 #flow-edge-labels text.next { fill: var(--e-next); text-anchor: start; }
 #flow-edge-labels text.loop { fill: var(--e-loop); text-anchor: end; }
+#flow-edge-labels text.flip { text-anchor: end; }
+/* ラベルの地色（カードやサイドカードに重なるので淡い土台を敷く） */
+#flow-edge-labels rect.lbl-bg { fill: var(--bg2); stroke: var(--line); stroke-width: .6px; opacity: .93; }
 #flow-edge-labels text.hl { font-size: 11.5px; }
 #flow-edge-labels text.dimmed { opacity: .2; }
 .fc-row { display: flex; align-items: flex-start; gap: 20px; position: relative; z-index: 1; }
@@ -261,7 +284,9 @@ table.grid tbody tr.sel { background: #17293f; }
 .fc-side { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding-top: 2px; }
 .fc-arrow-row .fc-arrow { flex: 0 0 440px; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--dim); font-size: 11px; padding: 4px 0; position: relative; z-index: 1; }
 .fc-arrow-row .fc-side { visibility: hidden; }
-.fc-arrow .arrow { color: var(--accent); font-size: 15px; line-height: 1; }
+.fc-arrow .fc-arrow-svg { display: block; }
+.fc-arrow-svg .stem { stroke: var(--accent); stroke-width: 1.7; fill: none; }
+.fc-arrow-svg .head { fill: var(--accent); }
 .fc-more { display: flex; justify-content: center; gap: 8px; align-items: center; margin-top: 10px; position: relative; z-index: 1; }
 .side-head { font-size: 10.5px; color: var(--dim); letter-spacing: .04em; }
 .fnode {
@@ -272,7 +297,7 @@ table.grid tbody tr.sel { background: #17293f; }
 }
 .fnode:hover { border-color: var(--accent); }
 .fnode.selected { outline: 2px solid var(--accent); outline-offset: 1px; }
-.fnode.dashed { border-style: dashed; border-left-style: solid; background: #191f27; }
+.fnode.dashed { border-style: dashed; border-left-style: solid; background: var(--bg-dash); }
 .fnode .t { display: flex; align-items: center; gap: 6px; font-weight: 600; font-size: 12.5px; min-width: 0; }
 .fnode .t .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fnode .id { color: var(--dim); font-family: var(--mono); font-size: 10px; word-break: break-all; margin-top: 2px; }
@@ -281,16 +306,16 @@ table.grid tbody tr.sel { background: #17293f; }
 /* ステップボックス（フローチャートのノード） */
 .step-box { padding-right: 26px; }
 .step-box .mk { color: var(--dim); font-size: 10px; width: 9px; flex: none; }
-.step-box.expanded { border-color: var(--accent); background: #16202c; }
+.step-box.expanded { border-color: var(--accent); background: var(--bg-open); }
 .step-box.expanded .mk { color: var(--accent); }
 .step-box .num { color: var(--dim); font-weight: 500; font-family: var(--mono); flex: none; }
 .step-box .info {
   position: absolute; right: 5px; top: 5px; width: 18px; height: 18px; line-height: 16px; padding: 0;
-  border: 1px solid var(--line); border-radius: 5px; background: #0f151d; color: var(--muted);
+  border: 1px solid var(--line); border-radius: 5px; background: var(--bg-panel); color: var(--muted);
   font-size: 11px; cursor: pointer;
 }
 .step-box .info:hover { color: var(--fg); border-color: var(--accent); }
-.step-box.hl { outline: 2px solid #d29922; outline-offset: 1px; }
+.step-box.hl { outline: 2px solid var(--warn); outline-offset: 1px; }
 /* 分岐ノード（gateway）はひし形。疑似要素を clip-path で切り、2px 差分を縁に見せる */
 .step-box.gw {
   width: 78%; margin: 3px auto; padding: 15px 44px; text-align: center;
@@ -301,13 +326,13 @@ table.grid tbody tr.sel { background: #17293f; }
   clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
 }
 .step-box.gw::before { background: var(--k-boundary); }
-.step-box.gw::after { inset: 2px; background: #151d29; }
+.step-box.gw::after { inset: 2px; background: var(--bg-gw); }
 .step-box.gw:hover::before, .step-box.gw.expanded::before { background: var(--accent); }
-.step-box.gw.hl::before { background: #d29922; }
-.step-box.gw.expanded::after { background: #1a2534; }
+.step-box.gw.hl::before { background: var(--warn); }
+.step-box.gw.expanded::after { background: var(--bg-gw-open); }
 /* ひし形に四角い outline は似合わないので、選択・強調は疑似要素側の色で出す */
 .step-box.gw.selected, .step-box.gw.hl { outline: none; }
-.step-box.gw.selected::before { background: var(--accent); filter: drop-shadow(0 0 5px rgba(88, 166, 255, .55)); }
+.step-box.gw.selected::before { background: var(--accent); filter: drop-shadow(0 0 5px var(--accent-glow)); }
 /* 展開時は id と説明が入るので、ひし形の usable 領域を広げる */
 .step-box.gw.expanded { width: 100%; padding: 30px 74px; }
 .step-box.gw .t, .step-box.gw .pvs { justify-content: center; }
@@ -315,16 +340,16 @@ table.grid tbody tr.sel { background: #17293f; }
 .step-box.gw .info { right: 32px; top: 50%; transform: translateY(-50%); }
 .gwmark { color: var(--k-boundary); flex: none; font-size: 11px; }
 .b-io.g { color: var(--e-next); }
-.badge.loop { background: #3a1d1d; color: #ff8f85; border-color: #7d3a35; }
+.badge.loop { background: var(--loop-bg); color: var(--loop-fg); border-color: var(--loop-bd); }
 .sub-card.branch .bl { color: var(--e-next); font-weight: 650; }
 .sub-card.branch.loop .bl { color: var(--e-loop); }
-.b-io { background: #1b2431; color: var(--muted); border: 1px solid var(--line); }
+.b-io { background: var(--bg-chip); color: var(--muted); border: 1px solid var(--line); }
 .b-io.r { color: var(--e-reads); } .b-io.w { color: var(--e-writes); } .b-io.i { color: var(--e-invokes); }
 .xcount { display: none; }
-.xcount.on { display: inline-flex; background: #3a2b12; color: #e3b341; border: 1px solid #7a5514; }
+.xcount.on { display: inline-flex; background: var(--warn-bg); color: var(--warn-fg); border: 1px solid var(--warn-bd); }
 .sub-wrap { margin: 4px 0 0 14px; display: flex; flex-direction: column; gap: 5px; position: relative; z-index: 1; }
 .sub-card {
-  border: 1px dashed var(--line); background: #141b23; border-radius: 6px; padding: 4px 7px;
+  border: 1px dashed var(--line); background: var(--bg-sub); border-radius: 6px; padding: 4px 7px;
   font-size: 11.5px; cursor: pointer; display: flex; align-items: center; gap: 6px;
 }
 .sub-card:hover { border-color: var(--accent); }
@@ -341,29 +366,29 @@ table.grid tbody tr.sel { background: #17293f; }
 
 /* ---------- グラフ（canvas） ---------- */
 .canvas-host { position: absolute; inset: 0; }
-#graph-canvas { display: block; width: 100%; height: 100%; background: radial-gradient(1200px 700px at 45% 20%, #131c26, #0b1017 70%); cursor: grab; }
+#graph-canvas { display: block; width: 100%; height: 100%; background: radial-gradient(1200px 700px at 45% 20%, var(--canvas-a), var(--canvas-b) 70%); cursor: grab; }
 #graph-canvas.dragging { cursor: grabbing; }
 .canvas-hud {
   position: absolute; left: 10px; top: 10px; z-index: 5; display: flex; gap: 6px; flex-wrap: wrap;
   align-items: center; font-size: 11px; color: var(--muted);
 }
-.canvas-hud .box { background: #101822cc; border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; backdrop-filter: blur(3px); }
-.canvas-hud .box.on { color: var(--warn); border-color: #6a5320; }
+.canvas-hud .box { background: var(--hud-bg); border: 1px solid var(--line); border-radius: 6px; padding: 2px 8px; backdrop-filter: blur(3px); }
+.canvas-hud .box.on { color: var(--warn); border-color: var(--warn-bd); }
 
 /* ---------- コード一覧 ---------- */
 .code-item { border: 1px solid var(--line); border-radius: 8px; background: var(--bg2); margin-bottom: 8px; overflow: hidden; }
 .code-head { display: flex; align-items: center; gap: 9px; padding: 7px 10px; cursor: pointer; }
-.code-head:hover { background: #17202b; }
+.code-head:hover { background: var(--bg-hover); }
 .code-head .path { font-family: var(--mono); font-size: 12px; }
-.code-body { border-top: 1px solid var(--line-soft); background: #0f151d; }
+.code-body { border-top: 1px solid var(--line-soft); background: var(--bg-panel); }
 table.signals { width: 100%; border-collapse: collapse; font-size: 11.5px; }
 table.signals th, table.signals td { padding: 4px 8px; border-bottom: 1px solid var(--line-soft); text-align: left; }
-table.signals th { color: var(--dim); font-weight: 600; background: #101720; }
+table.signals th { color: var(--dim); font-weight: 600; background: var(--bg-head); }
 table.signals td.line { color: var(--dim); font-family: var(--mono); width: 54px; }
 table.signals td.sig { font-family: var(--mono); color: var(--muted); width: 110px; }
 table.signals td.snip { font-family: var(--mono); white-space: pre-wrap; word-break: break-word; cursor: pointer; }
 table.signals td.snip:hover { color: var(--accent); }
-table.signals tr.hl td { background: #1b2a3d; }
+table.signals tr.hl td { background: var(--bg-sel); }
 
 /* ---------- 詳細パネル ---------- */
 #detail-panel .dt-head { display: flex; align-items: flex-start; gap: 8px; }
@@ -375,14 +400,14 @@ table.kv td.k { color: var(--dim); width: 34%; word-break: break-all; }
 table.kv td.v { word-break: break-word; }
 .edge-group { margin-bottom: 8px; }
 .edge-group .eg-title { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
-.edge-row { border: 1px solid var(--line-soft); border-radius: 6px; padding: 4px 7px; margin-bottom: 4px; background: #131a22; }
+.edge-row { border: 1px solid var(--line-soft); border-radius: 6px; padding: 4px 7px; margin-bottom: 4px; background: var(--bg-row); }
 .edge-row .er-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .edge-row .er-note { color: var(--muted); font-size: 11px; margin-top: 2px; }
 .edge-row .er-conf { color: var(--dim); font-size: 10.5px; font-family: var(--mono); }
 .ev-row { font-size: 11px; padding: 3px 0; border-bottom: 1px solid var(--line-soft); }
 .ev-row .loc { font-family: var(--mono); color: var(--accent); cursor: pointer; }
 .ev-row .snip { font-family: var(--mono); color: var(--muted); white-space: pre-wrap; word-break: break-word; display: block; margin-top: 1px; }
-form.ann { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: #121922; margin-bottom: 8px; }
+form.ann { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-form); margin-bottom: 8px; }
 form.ann label { font-size: 11px; color: var(--dim); display: block; margin-bottom: 2px; }
 form.ann .row { display: flex; gap: 6px; flex-wrap: wrap; }
 form.ann .row > * { flex: 1 1 auto; min-width: 0; }
@@ -391,17 +416,76 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
 .ann-pick { max-height: 130px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; display: none; }
 .ann-pick.open { display: block; }
 .ann-pick div { padding: 4px 7px; cursor: pointer; font-size: 11.5px; border-bottom: 1px solid var(--line-soft); }
-.ann-pick div:hover { background: #1c2734; }
+.ann-pick div:hover { background: var(--bg-hover); }
 
 #toast {
   position: fixed; left: 50%; bottom: 34px; transform: translateX(-50%) translateY(20px);
-  background: #1c2734; border: 1px solid var(--accent); color: var(--fg);
+  background: var(--bg-hover); border: 1px solid var(--accent); color: var(--fg);
   padding: 7px 14px; border-radius: 8px; font-size: 12px; opacity: 0; pointer-events: none;
   transition: opacity .18s, transform .18s; z-index: 200; max-width: 70vw;
 }
 #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 #fatal { padding: 26px; color: var(--danger); }
+
+/* ============================================================
+   ライトテーマ。:root の変数を差し替えるだけ（値のハードコード禁止）。
+   縁と種別の 9 色は白地で沈まないよう彩度・明度を落としめにしている。
+   ============================================================ */
+html[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f4f6f9; --bg2: #fbfcfe; --bg3: #eaeef4; --bg4: #dee5ee;
+  --line: #ccd5e0; --line-soft: #e1e7ef;
+  --fg: #17202c; --muted: #4a5665; --dim: #64707f;
+  --accent: #0a5cc4; --ok: #13732f; --warn: #8a5d00; --danger: #b42318;
+  --k-flow: #13732f; --k-step: #0a5cc4; --k-store: #9a5b00; --k-boundary: #6b3fd4; --k-code: #556070;
+  --e-reads: #0b6e78; --e-writes: #a85200; --e-invokes: #7333c9; --e-next: #13732f; --e-loop: #cc2230;
+  --e-impl: #79838f; --e-touch: #8b95a4; --e-cont: #a3b0c2; --e-default: #8b95a4;
+  --bg-panel: #eaeef4; --bg-head: #eef2f7; --bg-hover: #e0e8f2; --bg-sel: #d3e6fb;
+  --bg-sub: #ffffff; --bg-dash: #f2f5f9; --bg-open: #e8f1fd; --bg-gw: #ffffff; --bg-gw-open: #e8f1fd;
+  --bg-row: #fbfcfe; --bg-form: #f7f9fc; --bg-chip: #e7ecf3;
+  --hdr-a: #ffffff; --hdr-b: #eef1f6; --scroll-thumb: #bcc7d4; --halo: #ffffff;
+  --shadow-pop: 0 10px 26px rgba(24, 38, 58, .16);
+  --btn-pri-bg: #0a5cc4; --btn-pri-hi: #0a4fa8; --btn-pri-fg: #ffffff;
+  --accent-soft: rgba(10, 92, 196, .13); --accent-glow: rgba(10, 92, 196, .4);
+  --fade-a: rgba(244, 246, 249, .9); --fade-b: rgba(244, 246, 249, 0);
+  --canvas-a: #ffffff; --canvas-b: #eaeff6; --hud-bg: rgba(255, 255, 255, .88);
+  --cv-label: #3a4657; --cv-label-sel: #0f1b2b; --cv-ring: #0f1b2b; --cv-halo: rgba(255, 255, 255, .92);
+  --warn-fg: #7a4f00; --warn-bd: #dcc793; --warn-bg: #fbf1dc;
+  --danger-fg: #a02418; --danger-bd: #f0c3bd; --danger-bg: #fdefed;
+  --pv-def-fg: #11642a; --pv-def-bd: #b9dfc2; --pv-def-bg: #e3f3e8;
+  --pv-sta-fg: #4a5665; --pv-sta-bd: #ccd5e0; --pv-sta-bg: #eaf0f7;
+  --pv-llm-fg: #6a2fbd; --pv-llm-bd: #ddcbf5; --pv-llm-bg: #efe3fb;
+  --pv-hum-fg: #0a5cc4; --pv-hum-bd: #c6ddf7; --pv-hum-bg: #e2eefb;
+  --loop-fg: #b4231f; --loop-bd: #f2c7c1; --loop-bg: #fdefed;
+}
+/* 縁の三角マーカーもテーマ変数で塗る（JS に色を持たせない） */
+#flow-edges marker.mk-reads path { fill: var(--e-reads); }
+#flow-edges marker.mk-writes path { fill: var(--e-writes); }
+#flow-edges marker.mk-invokes path { fill: var(--e-invokes); }
+#flow-edges marker.mk-next path { fill: var(--e-next); }
+#flow-edges marker.mk-loop path { fill: var(--e-loop); }
 </style>
+<script>
+  /* 描画開始前にテーマを決めておいて、ちらつきを防ぐ（本体スクリプトでも同じ値を再適用する）。
+     保存キー flow-theme、hash の theme= が順に優先。どちらでもなければ prefers-color-scheme。 */
+  (function () {
+    try {
+      var de = document.documentElement, m = "system";
+      try {
+        var v = window.localStorage.getItem("flow-theme");
+        if (v === "light" || v === "dark" || v === "system") m = v;
+      } catch (e) { /* localStorage 不可でも続行 */ }
+      if (m === "system") {
+        var h = String(location.hash || "").match(/[#&]theme=(light|dark)(?=&|$)/);
+        if (h) m = h[1];
+      }
+      var light = m === "light" ||
+        (m === "system" && window.matchMedia && matchMedia("(prefers-color-scheme: light)").matches);
+      de.setAttribute("data-theme", light ? "light" : "dark");
+      de.setAttribute("data-theme-mode", m);
+    } catch (e) { /* 何もできない場合はダークのまま */ }
+  })();
+</script>
 </head>
 <body>
 <header class="top">
@@ -417,6 +501,7 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
     </div>
     <button class="btn" id="btn-export" title="localStorage の人注釈を annotations/human.json として書き出す">注釈 JSON</button>
     <button class="btn" id="btn-clear-ann" title="ブラウザ内の注釈を消す（リポジトリの human.json には影響しません）">ローカル注釈をクリア</button>
+    <button class="btn" id="btn-theme" title="テーマ切替"></button>
     <button class="btn primary" id="btn-share" title="現在の表示を URL でコピー">共有</button>
   </div>
   <div class="filter-row">
@@ -550,6 +635,60 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
   }
 
   // ---------- グラフ読み込み ----------
+  // ---------- テーマ ----------
+  // 保存キーは注釈（ANN_KEY）と分ける。注釈 JSON の書き出しには theme を混ぜない。
+  var THEME_KEY = "flow-theme";
+  var THEME_MODES = ["dark", "light", "system"];
+  var themeMode = "system";   // "dark" | "light" | "system"
+  var themeVars = Object.create(null);
+  // canvas 描画の色は CSS 変数から読む（テーマ切替時に破棄して読み直す）
+  function tv(name) {
+    var v = themeVars[name];
+    if (!v) {
+      v = "";
+      try { v = String(getComputedStyle(document.documentElement).getPropertyValue(name)).trim(); }
+      catch (e) { /* file:// でも落ちない */ }
+      v = v || "#8b949e";
+      themeVars[name] = v;
+    }
+    return v;
+  }
+  function themeSystemIsLight() {
+    try { return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches); }
+    catch (e) { return false; }
+  }
+  function themeResolved() {
+    return themeMode === "system" ? (themeSystemIsLight() ? "light" : "dark") : themeMode;
+  }
+  function readThemeStore() {
+    try {
+      var v = window.localStorage.getItem(THEME_KEY);
+      return THEME_MODES.indexOf(v) >= 0 ? v : "system";
+    } catch (e) { return "system"; }
+  }
+  function applyTheme() {
+    var r = themeResolved();
+    var de = document.documentElement;
+    de.setAttribute("data-theme", r);
+    de.setAttribute("data-theme-mode", themeMode);
+    themeVars = Object.create(null);
+    var btn = document.getElementById("btn-theme");
+    if (btn) {
+      btn.textContent = themeMode === "light" ? "☀ ライト" : themeMode === "dark" ? "☾ ダーク" : "◐ システム";
+      btn.dataset.mode = themeMode;
+      btn.title = "テーマ: " + r + "（クリックで ダーク → ライト → システム）";
+    }
+    if (graphView && graphView.requestDraw) graphView.requestDraw();
+    return r;
+  }
+  function cycleTheme() {
+    themeMode = themeMode === "dark" ? "light" : themeMode === "light" ? "system" : "dark";
+    try { window.localStorage.setItem(THEME_KEY, themeMode); } catch (e) { /* 保存できなくても表示は切り替わる */ }
+    applyTheme();
+    writeHash();
+  }
+  themeMode = readThemeStore();
+
   var state = {
     graph: { schemaVersion: 1, nodes: [], edges: [], warnings: [] },
     ann: emptyAnn(),
@@ -808,6 +947,7 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
     if (state.flowId) p.set("flow", state.flowId);
     if (state.selected) p.set("select", state.selected);
     if (state.view === "flow" && state.expanded.size) p.set("expanded", Array.from(state.expanded).join(","));
+    if (themeMode !== "system") p.set("theme", themeMode);
     return p.toString();
   }
   function writeHash() {
@@ -826,6 +966,8 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
     var s = p.get("select"); // URLSearchParams が %3A を ":" に戻してくれる
     if (s && state.byId.has(s)) state.selected = s;
     else if (s) toast("hash の select=" + s + " はこのグラフに見つかりません");
+    var th = p.get("theme");
+    if (th === "light" || th === "dark") themeMode = th;   // 共有 URL は保存値より優先（この閲覧だけ優先）
     var ex = p.get("expanded"); // 展開状態も復元（%2C 区切りは URLSearchParams が "," に戻す）
     if (ex) ex.split(",").forEach(function (id) {
       if (!id) return;
@@ -1145,7 +1287,7 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
         i.style.borderColor = "var(--e-" + p[0] + ")";
         this.bar.appendChild(el("span", {}, i, p[1]));
       }, this);
-      this.bar.appendChild(el("span", {}, el("i", { class: "dash", style: "border-color:#8b98a9" }), "破線 = LLM / 人間の注釈"));
+      this.bar.appendChild(el("span", {}, el("i", { class: "dash", style: "border-color:var(--dim)" }), "破線 = LLM / 人間の注釈"));
       this.hudCull = el("span", { class: "hint", id: "flow-cull-note", style: "display:none" }, "");
       this.bar.appendChild(this.hudCull);
     },
@@ -1211,7 +1353,7 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
     arrowRow: function () {
       return el("div", { class: "fc-row fc-arrow-row" },
         el("div", { class: "fc-side" }),
-        el("div", { class: "fc-arrow", title: "next" }, el("span", { class: "arrow" }, "▼")),
+        el("div", { class: "fc-arrow", title: "next" }, downArrowSvg()),
         el("div", { class: "fc-side" }));
     },
     stepRow: function (n, order, placed) {
@@ -1430,12 +1572,9 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
       this.edgeItems.concat(this.linkItems).forEach(function (it) {
         if (!it.fromEl.isConnected || !it.toEl.isConnected) { it.d = null; it.bb = null; return; }
         var ra = it.fromEl.getBoundingClientRect(), rb = it.toEl.getBoundingClientRect();
-        if (it.link) {
-          var g = stepLinkPath(box, ra, rb, it.loop, it.fan);
-          it.d = g.d; it.lx = g.lx; it.ly = g.ly;
-        } else {
-          it.d = bezier(box, ra, rb);
-        }
+        var g = it.link ? stepLinkPath(box, ra, rb, it.loop, it.fan) : bezier(box, ra, rb);
+        it.d = g.d; it.tan = g.tan; it.face = g.face;
+        if (it.link) { it.lx = g.lx; it.ly = g.ly; }
         it.bb = {
           y0: Math.min(ra.top, rb.top) - box.top - 8,
           y1: Math.max(ra.bottom, rb.bottom) - box.top + 8,
@@ -1455,15 +1594,16 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
         g.setAttribute("viewBox", "0 0 " + w + " " + h);
       });
       var defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
-      [["reads", "#2dd4bf"], ["writes", "#f0883e"], ["invokes", "#bc8cff"], ["next", "#3fb950"], ["loop", "#ff7b72"]].forEach(function (p) {
+      ["reads", "writes", "invokes", "next", "loop"].forEach(function (kn) {
         var m = document.createElementNS("http://www.w3.org/2000/svg", "marker");
-        m.setAttribute("id", "mk-" + p[0]);
+        m.setAttribute("id", "mk-" + kn);
+        m.setAttribute("class", "mk-" + kn);
         m.setAttribute("markerWidth", "7"); m.setAttribute("markerHeight", "7");
         m.setAttribute("refX", "6"); m.setAttribute("refY", "3");
+        // orient=auto が筋。終端接線に沿って三角が回る（角度は data-tan に入れて検査できる）
         m.setAttribute("orient", "auto"); m.setAttribute("markerUnits", "strokeWidth");
         var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
         path.setAttribute("d", "M0,0 L6,3 L0,6 z");
-        path.setAttribute("fill", p[1]);
         m.appendChild(path);
         defs.appendChild(m);
       });
@@ -1479,6 +1619,7 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
         win1 = sr.bottom - box.top + 160;
       }
       var skipped = 0;
+      var labels = [];
       items.forEach(function (it) {
         if (!it.d) return;
         var k = it.edge.kind;
@@ -1491,6 +1632,8 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
         path.setAttribute("class", "edge " + k + ((it.edge.provenance === "llm" || it.edge.provenance === "human") ? " dash" : "") +
           (related ? " hl" : (ioSel ? " dimmed" : "")));
         path.setAttribute("marker-end", "url(#mk-" + k + ")");
+        path.setAttribute("data-tan", Math.round(it.tan));
+        path.setAttribute("data-face", it.face || "");
         // data-edge の種別は縁の実際の kind（ループも next）。見た目の色は class 側で分ける
         path.setAttribute("data-edge", it.edge.source + "|" + it.edge.kind + "|" + it.edge.target);
         var title = document.createElementNS("http://www.w3.org/2000/svg", "title");
@@ -1512,6 +1655,60 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
         t.setAttribute("data-label", it.edge.source + "|" + it.edge.target);
         t.textContent = (it.loop ? "↺ " : "") + it.label;
         lbl.appendChild(t);
+        labels.push({ t: t, x: it.lx, y: it.ly, loop: !!it.loop, end: !!it.loop });
+      });
+      // ラベル配置: はみ出したものは縁の反対側へ回し、重なりは下へ押して避ける。
+      // 同じ出所の分岐ラベルは同じ高さになりやすく、展開中はサイドカードとぶつかるため。
+      labels.sort(function (a, b) { return a.y - b.y; });
+      // メイン列（ボックスが並ぶ帯）の右端。ラベルがここからはみ出すなら縁の左側へ寄せる
+      // （展開中は右のサイドカードと重なり、注釈チップの文字と二重に見えるため）。
+      var mainRight = w;
+      var boxEls = this.lane.querySelectorAll(".step-box");
+      if (boxEls.length) {
+        mainRight = -1e9;
+        Array.prototype.forEach.call(boxEls, function (b) {
+          var r = b.getBoundingClientRect();
+          if (r.right - box.left > mainRight) mainRight = r.right - box.left;
+        });
+      }
+      var placed = [];
+      labels.forEach(function (L) {
+        var len = 0;
+        try { len = L.t.getComputedTextLength(); } catch (e) { len = String(L.t.textContent).length * 11; }
+        if (L.end) {
+          if (L.x - len < 2) L.x = len + 2;
+        } else if (L.x + len > Math.min(w - 6, mainRight + 4)) {
+          L.t.setAttribute("class", L.t.getAttribute("class") + " flip");
+          L.end = true;
+          L.x -= 14;
+        }
+        L.x0 = L.end ? L.x - len : L.x;
+        L.x1 = L.end ? L.x : L.x + len;
+        for (var guard = 0; guard < 24; guard++) {
+          var hitY = null;
+          for (var i2 = 0; i2 < placed.length; i2++) {
+            var P = placed[i2];
+            if (L.x1 > P.x0 - 5 && L.x0 < P.x1 + 5 && Math.abs(L.y - P.y) < 17) hitY = Math.max(hitY || -1e9, P.y);
+          }
+          if (hitY === null) break;
+          L.y = hitY + 17;
+        }
+        L.t.setAttribute("x", L.x.toFixed(1));
+        L.t.setAttribute("y", L.y.toFixed(1));
+        // 文字の直下に淡い土台（他レイヤと重なっても読める）
+        var pad = 3;
+        var bx = L.x0 - pad, by = L.y - 10.5 - pad, bw = L.x1 - L.x0 + pad * 2, bh = 14 + pad * 2;
+        try {
+          var bb2 = L.t.getBBox();
+          bx = bb2.x - pad; by = bb2.y - pad; bw = bb2.width + pad * 2; bh = bb2.height + pad * 2;
+        } catch (e) { /* 計測できなければ概算値 */ }
+        var bg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        bg.setAttribute("class", "lbl-bg");
+        bg.setAttribute("x", bx.toFixed(1)); bg.setAttribute("y", by.toFixed(1));
+        bg.setAttribute("width", bw.toFixed(1)); bg.setAttribute("height", bh.toFixed(1));
+        bg.setAttribute("rx", "3");
+        lbl.insertBefore(bg, L.t);
+        placed.push(L);
       });
       if (this.hudCull) {
         var msg = skipped ? "画面外の縁 " + skipped.toLocaleString() + " 本は描画中略" : "";
@@ -1573,6 +1770,22 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
     });
     return c;
   }
+  // ▼ と同じ記号を SVG で。軸も三角の頂点も真下を向く（角度を検査できる形にする）
+  function downArrowSvg() {
+    var NS = "http://www.w3.org/2000/svg";
+    var svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("class", "fc-arrow-svg");
+    svg.setAttribute("width", "13"); svg.setAttribute("height", "17"); svg.setAttribute("viewBox", "0 0 13 17");
+    svg.setAttribute("aria-hidden", "true");
+    var stem = document.createElementNS(NS, "path");
+    stem.setAttribute("class", "stem"); stem.setAttribute("d", "M6.5,0.8 L6.5,10.2");
+    stem.setAttribute("data-arrow", "stem");
+    var head = document.createElementNS(NS, "path");
+    head.setAttribute("class", "head"); head.setAttribute("d", "M1.7,9.2 L11.3,9.2 L6.5,16.2 Z");
+    head.setAttribute("data-arrow", "head");
+    svg.appendChild(stem); svg.appendChild(head);
+    return svg;
+  }
   function flowCard(n, opts) {
     opts = opts || {};
     var md = n.metadata || {};
@@ -1617,47 +1830,102 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
   }
   // ステップ ⇄ ステップの縁。分岐はレーン右側、前方向ループは左側を回る。
   // ラベルは曲線の途中点（t=0.5）に置く。
+    // 分岐・ループ縁。レーンの側面を回ってから、行き先ボックスの上辺（または下辺）に
+  // 垂直に入る。終端の制御点を面の外側法線に置くので三角マーカーは必ず下（上）を向く。
   function stepLinkPath(box, ra, rb, loop, fan) {
-    var y1 = ra.top - box.top + ra.height / 2, y2 = rb.top - box.top + rb.height / 2;
+    var y1 = ra.top - box.top + ra.height / 2;
+    var x1 = loop ? ra.left - box.left : ra.left - box.left + ra.width;
+    var rx = rb.left - box.left, rw = rb.width;
+    var bcy = rb.top - box.top + rb.height / 2;
+    var down = bcy >= y1;
     var off = 13 + (fan || 0) * 20;
-    var x1, x2, cx;
-    if (loop) {
-      x1 = ra.left - box.left; x2 = rb.left - box.left;
-      cx = Math.max(6, Math.min(x1, x2) - off);
-    } else {
-      x1 = ra.left - box.left + ra.width; x2 = rb.left - box.left + rb.width;
-      cx = Math.max(x1, x2) + off;
+    var cx = loop ? Math.max(6, Math.min(x1, rx) - off) : Math.max(x1, rx + rw) + off;
+    // ▼ と重ならない位置へ入る（分岐は右寄り、ループは左寄り）
+    var ex = rx + rw * (loop ? 0.26 : 0.74);
+    var y2 = down ? rb.top - box.top : rb.bottom - box.top;
+    var sg = down ? 1 : -1;
+    var stub = Math.max(10, Math.min(24, Math.abs(y2 - y1) * 0.3));
+    var ym = y2 - sg * stub;
+    var dd = Math.max(12, Math.min(46, Math.min(Math.abs(ym - y1), Math.abs(ex - cx)) * 0.6));
+    var cy = ym - sg * dd;
+    var pts = [[x1, y1], [cx, y1], [ex, cy], [ex, ym]];
+    // ラベルは「レーンの側面を走っている」区間の、弧長 45% 付近に置く。
+    // 終点は行き先の真上なのでそこだと分かりにくく、同じ出所の分岐同士も重なる。
+    var best = pts[0], bd = Infinity, bestRun = null, bestRunD = Infinity, prev = pts[0], total = 0;
+    var segs = [];
+    for (var i = 1; i <= 20; i++) {
+      var pt = cubicAt(pts, i / 20);
+      total += Math.hypot(pt[0] - prev[0], pt[1] - prev[1]);
+      segs.push([pt, total]);
+      prev = pt;
     }
+    for (var j = 0; j < segs.length; j++) {
+      var q = segs[j], dx = Math.abs(q[0][0] - cx);
+      if (dx < bd) { bd = dx; best = q[0]; }
+      if (dx <= 10) {
+        var rd = Math.abs(q[1] / Math.max(1, total) - 0.45);
+        if (rd < bestRunD) { bestRunD = rd; bestRun = q[0]; }
+      }
+    }
+    if (bestRun) best = bestRun;
     return {
-      d: "M" + x1 + "," + y1 + " C" + cx + "," + y1 + " " + cx + "," + y2 + " " + x2 + "," + y2,
-      lx: cx + (loop ? -5 : 5),
-      ly: (y1 + y2) / 2,
+      d: "M" + x1 + "," + y1 + " C" + cx + "," + y1 + " " + ex + "," + cy + " " + ex + "," + ym +
+         " L" + ex + "," + y2,
+      tan: sg > 0 ? 90 : -90,
+      face: down ? "down" : "up",
+      lx: best[0] + (loop ? -5 : 5),
+      ly: best[1] + (fan || 0) * 6,
     };
   }
 
-  // 2 つのカードの間にベジェ。a/b の相対位置で出る辺・入る辺を決める
+  // 2 つのカード間のベジェ。出る辺・入る辺を決め、制御点をその辺の外側法線上に張る。
+  // そうすれば終端接線は必ず入る辺の法線（＝矢印の向き）と一致し、端だけ寝ることがない。
+  // 制御点の間隔は gap に比例させ、曲線が巻き戻らない範囲に収める。
   function bezier(box, ra, rb) {
     var ax = ra.left - box.left, ay = ra.top - box.top, aw = ra.width, ah = ra.height;
     var bx = rb.left - box.left, by = rb.top - box.top, bw = rb.width, bh = rb.height;
-    var acx = ax + aw / 2, bcx = bx + bw / 2;
-    var x1, y1, x2, y2, horizontal;
-    if (Math.abs(acx - bcx) > 30) {
-      horizontal = true;
-      if (bcx < acx) { x1 = ax; x2 = bx + bw; } else { x1 = ax + aw; x2 = bx; }
-      y1 = ay + ah / 2; y2 = by + bh / 2;
+    var acx = ax + aw / 2, acy = ay + ah / 2, bcx = bx + bw / 2, bcy = by + bh / 2;
+    var x1, y1, x2, y2, nx, ny, face, gap;
+    if (Math.abs(bcx - acx) > 30 && Math.abs(bcx - acx) >= Math.abs(bcy - acy)) {
+      var dir = bcx > acx ? 1 : -1;
+      x1 = dir > 0 ? ax + aw : ax;
+      x2 = dir > 0 ? bx : bx + bw;
+      y1 = acy; y2 = bcy;
+      nx = dir; ny = 0;
+      face = dir > 0 ? "right" : "left";
+      gap = Math.abs(x2 - x1);
     } else {
-      horizontal = false;
-      if (by < ay) { y1 = ay; y2 = by + bh; } else { y1 = ay + ah; y2 = by; }
+      var vdir = bcy > acy ? 1 : -1;
+      y1 = vdir > 0 ? ay + ah : ay;
+      y2 = vdir > 0 ? by : by + bh;
       x1 = acx; x2 = bcx;
+      nx = 0; ny = vdir;
+      face = vdir > 0 ? "down" : "up";
+      gap = Math.abs(y2 - y1);
     }
-    // 制御点を両端の中点に置く。段差が小さいときに制御点が外へ回って
-    // ループ（巻き戻り）になるのを防げる。
-    if (horizontal) {
-      var mx = (x1 + x2) / 2;
-      return "M" + x1 + "," + y1 + " C" + mx + "," + y1 + " " + mx + "," + y2 + " " + x2 + "," + y2;
-    }
-    var my = (y1 + y2) / 2;
-    return "M" + x1 + "," + y1 + " C" + x1 + "," + my + " " + x2 + "," + my + " " + x2 + "," + y2;
+    // 終点は入る辺の法線上に短い直進区間（stub）を置いてから打つ。
+    // これがないと終点の数 px 手前で線が寝たまま三角だけ真面を向くことになり、
+    // 見た目と矢印の向きが食い違う（stub は必ず 7px 以上）。
+    var stub = Math.max(8, Math.min(18, gap * 0.22));
+    var d = Math.max(8, Math.min(40, (gap - stub) * 0.5));
+    if (stub + d > Math.max(12, gap * 0.5)) d = Math.max(6, Math.max(12, gap * 0.5) - stub);
+    var x3 = x2 - nx * stub, y3 = y2 - ny * stub;
+    var c1x = x1 + nx * d, c1y = y1 + ny * d;
+    var c2x = x3 - nx * d, c2y = y3 - ny * d;
+    return {
+      d: "M" + x1 + "," + y1 + " C" + c1x + "," + c1y + " " + c2x + "," + c2y + " " + x3 + "," + y3 +
+         " L" + x2 + "," + y2,
+      tan: Math.atan2(ny, nx) * 180 / Math.PI,
+      face: face,
+    };
+  }
+  // 3 次ベジェの t の点
+  function cubicAt(p, t) {
+    var u = 1 - t;
+    return [
+      u * u * u * p[0][0] + 3 * u * u * t * p[1][0] + 3 * u * t * t * p[2][0] + t * t * t * p[3][0],
+      u * u * u * p[0][1] + 3 * u * u * t * p[1][1] + 3 * u * t * t * p[2][1] + t * t * t * p[3][1],
+    ];
   }
 
   // ==========================================================
@@ -1666,9 +1934,10 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
   //  組数上限、ラベルは画面内 & 上位次数のみ（全件描かない）、
   //  収束したら rAF を止める。
   // ==========================================================
-  var EDGE_COLOR = {
-    reads: "#2dd4bf", writes: "#f0883e", invokes: "#bc8cff",
-    "implemented-by": "#6e7681", touches: "#4d5866", contains: "#39424e", next: "#3fb950",
+  // 縁色は CSS 変数の別名（ライトテーマで読み替わる）
+  var EDGE_VAR = {
+    reads: "reads", writes: "writes", invokes: "invokes", loop: "loop", next: "next",
+    "implemented-by": "impl", touches: "touch", contains: "cont",
   };
   var graphView = {
     root: null, canvas: null, ctx: null, hud: null, hudFocus: null, hudZoom: null,
@@ -1676,7 +1945,7 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
     sim: { nodes: [], edges: [], temp: 0, k: 118, ticks: 0 },
     view: { x: 0, y: 0, k: 1 },
     focusSet: null, userMoved: false, topIds: new Set(), sortedEdges: null,
-    skippedEdges: 0, shownSkipBucket: -1,
+    skippedEdges: 0, shownSkipBucket: -1, heads: 0, headZoom: 0.22,
     ensure: function () {
       if (this.built) return;
       this.root = $("#view-graph");
@@ -1863,6 +2132,21 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
       this.updateHud();
     },
     radius: function (nd) { return 5 + Math.sqrt(nd.deg || 0) * 2.6; },
+    // 終端三角の幾何。tip は行き先ノードの縁に接し、ang は終端接線の角度（ラジアン）。
+    headOf: function (a, b) {
+      if (!a || !b || a === b) return null;
+      var dx = b.x - a.x, dy = b.y - a.y, len = Math.sqrt(dx * dx + dy * dy);
+      if (len < 1) return null;
+      var k = this.view.k;
+      var r = this.radius(b) + 1.4 / k;
+      var L = Math.min(15, 7.5 / k), W = L * 0.52;
+      if (len <= r + L * 0.6) return null;   // 短すぎて三角が収まらない縁は印をつけない
+      var ux = dx / len, uy = dy / len;
+      return {
+        ang: Math.atan2(dy, dx), ux: ux, uy: uy, len: L, wid: W,
+        tipX: b.x - ux * r, tipY: b.y - uy * r,
+      };
+    },
     draw: function () {
       if (!this.built || !this.ctx) return;
       var c = this.canvas, ctx = this.ctx;
@@ -1879,6 +2163,7 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
       var wx1 = (w - v.x) / v.k + 60, wy1 = (h - v.y) / v.k + 60;
       // 縁とノードはワールド座標で描くので、パン・ズームを canvas 側の変換に載せる
       ctx.setTransform(this.dpr * v.k, 0, 0, this.dpr * v.k, this.dpr * v.x, this.dpr * v.y);
+      this.heads = 0;
       var self = this;
       var focus = this.focusSet;
       var i;
@@ -1887,18 +2172,30 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
       var edges = this.sim.edges;
       var budget = edges.length > 12000 ? 3000 : edges.length > 5000 ? 8000 : edges.length;
       var painted = 0, skipped = 0;
-      function paintEdge(e) {
+      // 終端の三角。向きは終端接線（ここ直線なので方向そのもの）から atan2 で出す。
+      function paintEdge(e, hot) {
         var a = self.pos.get(e.source), b = self.pos.get(e.target);
         if (!a || !b) return false;
         if (Math.max(a.x, b.x) < wx0 || Math.min(a.x, b.x) > wx1 || Math.max(a.y, b.y) < wy0 || Math.min(a.y, b.y) > wy1) return false;
         ctx.globalAlpha = focus ? 0.8 : (e.provenance === "llm" || e.provenance === "human" ? 0.75 : 0.55);
-        ctx.strokeStyle = EDGE_COLOR[e.kind] || "#4d5866";
+        ctx.strokeStyle = edgeColor(e.kind);
+        ctx.fillStyle = ctx.strokeStyle;
         if (e.provenance === "llm" || e.provenance === "human") ctx.setLineDash([6 / v.k, 4 / v.k]);
         else ctx.setLineDash([]);
+        var hd = (v.k >= self.headZoom || hot) ? self.headOf(a, b) : null;
         ctx.beginPath();
         ctx.moveTo(a.x, a.y);
-        ctx.lineTo(b.x, b.y);
+        ctx.lineTo(hd ? hd.tipX : b.x, hd ? hd.tipY : b.y);
         ctx.stroke();
+        if (hd) {
+          ctx.beginPath();
+          ctx.moveTo(hd.tipX, hd.tipY);
+          ctx.lineTo(hd.tipX - hd.ux * hd.len - hd.uy * hd.wid, hd.tipY - hd.uy * hd.len + hd.ux * hd.wid);
+          ctx.lineTo(hd.tipX - hd.ux * hd.len + hd.uy * hd.wid, hd.tipY - hd.uy * hd.len - hd.ux * hd.wid);
+          ctx.closePath();
+          ctx.fill();
+          self.heads++;
+        }
         return true;
       }
       ctx.lineWidth = Math.max(0.6, 1.2 / v.k);
@@ -1919,10 +2216,11 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
         if (painted >= budget) { skipped++; continue; }
         if (paintEdge(e)) painted++;
       }
-      if (hot) { for (i = 0; i < hot.length; i++) if (paintEdge(hot[i])) painted++; }
+      if (hot) { for (i = 0; i < hot.length; i++) if (paintEdge(hot[i], true)) painted++; }
       ctx.setLineDash([]);
       ctx.globalAlpha = 1;
       this.skippedEdges = skipped;
+      this.headsDrawn = this.heads;
       var bucket = Math.round(skipped / 500);
       if (bucket !== this.shownSkipBucket) { this.shownSkipBucket = bucket; this.updateHud(); }
       // --- ノード ---
@@ -1936,12 +2234,12 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
         ctx.globalAlpha = dimN ? 0.12 : 1;
         ctx.beginPath();
         ctx.arc(nd.x, nd.y, r, 0, 6.283185);
-        ctx.fillStyle = KIND_COLOR[nd.kind] || "#8b949e";
+        ctx.fillStyle = kindColor(nd.kind);
         ctx.fill();
         var n0 = byId.get(nd.id);
         if (n0 && n0.metadata && n0.metadata.candidate === true) {
           ctx.lineWidth = 1.4 / v.k;
-          ctx.strokeStyle = "#d29922";
+          ctx.strokeStyle = tv("--warn");
           ctx.setLineDash([3 / v.k, 3 / v.k]);
           ctx.stroke();
           ctx.setLineDash([]);
@@ -1949,7 +2247,7 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
         if (nd.id === state.selected) {
           ctx.globalAlpha = 1;
           ctx.lineWidth = 2.4 / v.k;
-          ctx.strokeStyle = "#f0f6fc";
+          ctx.strokeStyle = tv("--cv-ring");
           ctx.stroke();
         }
       }
@@ -1984,9 +2282,9 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
         }
         if (clash) continue;
         placed.push({ x: lx, y: ly, w: lw, h: lh });
-        ctx.strokeStyle = "rgba(8,12,18,.85)";
+        ctx.strokeStyle = tv("--cv-halo");
         ctx.strokeText(label, sx, sy + rr + 3);
-        ctx.fillStyle = m.id === state.selected ? "#f0f6fc" : "#c7d2de";
+        ctx.fillStyle = m.id === state.selected ? tv("--cv-label-sel") : tv("--cv-label");
         ctx.fillText(label, sx, sy + rr + 3);
       }
     },
@@ -2093,7 +2391,8 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
       c.addEventListener("dblclick", function () { self.userMoved = false; self.fit(); self.requestDraw(); });
     },
   };
-  var KIND_COLOR = { flow: "#3fb950", step: "#58a6ff", store: "#f0883e", boundary: "#bc8cff", code: "#8b949e" };
+  function kindColor(kind) { return tv("--k-" + kind); }
+  function edgeColor(kind) { return tv("--e-" + (EDGE_VAR[kind] || "default")); }
   // n ホップ到達集合（フォーカス用）
   function neighborhood(id, hops) {
     var seen = new Set([id]);
@@ -2822,6 +3121,14 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
     reindex();
     state.flowId = (flows()[0] || {}).id || null;
     applyHash();
+    applyTheme();   // data-theme を先に決める（hash の theme= は保存値より優先）
+    $("#btn-theme").addEventListener("click", cycleTheme);
+    try {
+      var mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: light)") : null;
+      var onMq = function () { if (themeMode === "system") applyTheme(); };
+      if (mq && mq.addEventListener) mq.addEventListener("change", onMq);
+      else if (mq && mq.addListener) mq.addListener(onMq);
+    } catch (e) { /* matchMedia が無い環境は初期状態のまま */ }
 
     // --- ヘッダ / タブのイベント ---
     Object.keys(views).forEach(function (k) { views[k].ensure(); });
@@ -2868,6 +3175,7 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
     window.addEventListener("hashchange", function () {
       if (suppressingHash) return;
       applyHash();
+      applyTheme();   // hash の theme= でも切り替わる
       refresh();
       setView(state.view, true);
       renderDetail();
