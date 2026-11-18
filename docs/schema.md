@@ -65,7 +65,7 @@ worklist.mjs ←─ graph.json（LLM が注釈を書くためのワークシー�
 | `writes` | step / boundary → store | 出力に書く |
 | `invokes` | step → boundary | API 実行などの境界を呼ぶ |
 | `implemented-by` | step → code | そのステップを実装しているコード（主に注釈） |
-| `touches` | code → store / boundary | スキャンがコード内で検出したアクセス（`metadata.access` = `read` / `write` / `invoke`） |
+| `touches` | code → store / boundary | スキャンがコード内で検出したアクセス（`metadata.access` = `read` / `write` / `invoke`。access が違えば同一端点でも別縁） |
 
 `boundary → store` の `reads` / `writes` が「API の向こう側で最終的にどのテーブル/ファイルに
 届くか」を表す。境界の向こうはコードに見えないので、原則として注釈（`llm` / `human`）が張る。
@@ -135,12 +135,18 @@ JSON にコメントを許す（JSONC）。`--flows` に渡したディレクト
 - `steps` の配列順が `next` エッジの順序になる。ただし **`branches` を持つステップからは
   暗黙の「次へ」縁を張らない**（分岐はすべて明示縁になる）
 - **分岐・ループ**: `branches[].to` は同一 flow 内の step id を指す。前方向（配列で前の
-  ステップ）を指せばそれがループで、追加の構文は無い。`label` はビューアの縁ラベルに使う
+  ステップ）を指せばそれがループで、追加の構文は無い。**自分自身の `id` を指すと自己ループ縁**
+  （自分自身へ戻る `next`、`metadata.loop`）になる。`label` はビューアの縁ラベルに使う
   （「在庫あり」などの条件を人間が読むために書く）
+- **同じ宛先への条件違いは別縁**: 同じ step から同じ `to` へ `label` を変えて 2 本書くと、
+  2 本の `next` 縁として残る（`label` が縁の同一性の一部。黙って 1 本に畳まない）
 - `branches` を書いたのに `kind: "gateway"` を忘れた場合は gateway に昇格させて警告を出す。
-  gateway に branches が 2 未満、`to` が同一フローに存在しない、他のステップから一度も
-  到達できない場合も警告する（グラフにしないよりマシなので張るが、穴は残さない）
-- 同じステップに `reads` と `writes` で同じ参照を書くと双向の縁になる（自己ループにはしない）
+  gateway に branches が 2 未満、`to` が同一フローに存在しない、**入口（配列先頭）から `next` を
+  辿って到達できない**場合も警告する（グラフにしないよりマシなので張るが、穴は残さない。
+  到達判定は入口からの到達可能集合で見るため、入口から孤立した島も拾う）
+- 同じステップに `reads` と `writes` で同じ参照を書くと双向の縁になる（自己ループにはしない）。
+  scan 由来の `touches` も、同一コード×同一格納先でも `access`（read / write / invoke）が
+  違えば別縁（信号の並び順に依存せず、読みと書きは混ざらない）
 
 ## scan.json（scan.mjs の出力）
 

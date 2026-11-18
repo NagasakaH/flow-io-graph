@@ -95,8 +95,15 @@ function addEdge(source, target, kind, { provenance = "definition", confidence, 
     warn(`エッジの端点が存在しないので捨てました: ${source} -${kind}-> ${target}`);
     return null;
   }
-  if (source === target) return null; // 自己ループは張らない
-  const key = edgeKey({ source, kind, target });
+  if (source === target && kind !== "next") return null; // 自己ループは next（自分自身への分岐）だけ許す
+  // next は条件ラベルとループ旗、touches は access が違う縁は別縁として立てる
+  // （同一端点で黙って統合すると、条件や読み書きが最初の 1 本に吸収されて消える）
+  let key = edgeKey({ source, kind, target });
+  if (kind === "next") {
+    if (metadata?.label) key += `|${metadata.label}`;
+    if (metadata?.loop) key += "|loop";
+  }
+  if (kind === "touches" && metadata?.access) key += `|${metadata.access}`;
   const edge = { source, target, kind, provenance, ...(confidence !== undefined ? { confidence } : {}), ...(note ? { note } : {}), ...(metadata ? { metadata } : {}) };
   const kept = edges.get(key);
   if (!kept) {
@@ -149,7 +156,7 @@ if (opt.scan) {
   };
   candidate(scan.stores, "storeKind", "storeKind");
   candidate(scan.boundaries, "boundaryKind", "boundaryKind");
-  // code → store/boundary の touches。同一 (code, target) は 1 本に集約して evidence へ寄せる
+  // code → store/boundary の touches。同一 (code, target, access) を 1 本に集約して evidence へ寄せる
   for (const f of scan.files ?? []) {
     for (const s of f.signals ?? []) {
       if (!s.ref) continue;
@@ -247,7 +254,6 @@ if (opt.flows) {
         seq.push({ stepId, step, order });
       }
       // 2 周目: next 縁（branches があれば全て明示、無ければ前ステップから暗黙の直列）
-      const reached = new Set();
       const orderOf = new Map(seq.map((s) => [s.stepId, s.order]));
       let prev = null;
       for (const { stepId, step, order: ord } of seq) {
@@ -256,32 +262,45 @@ if (opt.flows) {
         // （抑止するのは branches を持つステップの「出口」だけ）
         if (prev) {
           addEdge(prev, stepId, "next", { provenance: "definition", confidence: 1, metadata: { order: ord } });
-          reached.add(stepId);
         }
         if (hasBranches) {
           for (const b of step.branches) {
             const targetId = `step:${flow.id}/${b.to}`;
-            const loop = orderOf.has(targetId) && orderOf.get(targetId) < ord;
+            // 前方向（自身含む）への分岐はループ。自身への to は自分自身に戻る縁として残す
+            const loop = orderOf.has(targetId) && orderOf.get(targetId) <= ord;
             const kept = addEdge(stepId, targetId, "next", {
               provenance: "definition",
               confidence: 1,
               metadata: { order: orderOf.get(targetId) ?? ord, ...(b.label ? { label: b.label } : {}), ...(loop ? { loop: true } : {}) },
             });
             if (loop && kept) process.stdout.write(`ループ検出: ${stepId} → ${targetId}${b.label ? ` (${b.label})` : ""}\n`);
-            reached.add(targetId);
           }
           prev = null; // 分岐ステップからの暗黙の次へは張らない
           continue;
         }
         prev = stepId;
       }
-      // 到達不能チェック: 先頭以外にどの next でも届かないステップは定義の穴
-      for (const { stepId } of seq.slice(1)) {
-        const hasIncoming = graphHasNext(flowId, stepId) || reached.has(stepId);
-        if (!hasIncoming) warn(`${file}: ${stepId} にどのステップからも到達しません（branches の to か並び順を確認してください）`);
+      // 到達不能チェック: 入口（配列先頭）から next を辿って届かないステップは定義の穴。
+      // 入次数だけでは、入口側から孤立した島（例: A→D の中で浮いている B⇄C）を見逃す
+      const flowIds = new Set(seq.map((s) => s.stepId));
+      const nextOf = new Map();
+      for (const e of edges.values()) {
+        if (e.kind === "next" && flowIds.has(e.source) && flowIds.has(e.target)) {
+          if (!nextOf.has(e.source)) nextOf.set(e.source, new Set());
+          nextOf.get(e.source).add(e.target);
+        }
       }
-      function graphHasNext(_flowId, targetId) {
-        return [...edges.values()].some((e) => e.kind === "next" && e.target === targetId);
+      const seen = new Set();
+      const stack = seq.length ? [seq[0].stepId] : [];
+      while (stack.length) {
+        const cur = stack.pop();
+        if (seen.has(cur)) continue;
+        seen.add(cur);
+        for (const t of nextOf.get(cur) ?? []) stack.push(t);
+      }
+      for (const { stepId } of seq) {
+        if (!seen.has(stepId))
+          warn(`${file}: ${stepId} は入口 ${seq[0].stepId} から next で到達できません（branches の to か並び順を確認してください）`);
       }
     }
   }

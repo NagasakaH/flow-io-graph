@@ -51,7 +51,84 @@ test("前方向の to はループとして metadata.loop が付き、stdout に
 
 test("どの next でも到達できないステップは警告する（グラフ自体は捨てる）", (t) => {
   const { stderr } = merge();
-  assert.match(stderr, /step:branch\/loopgate にどのステップからも到達しません/);
+  assert.match(stderr, /step:branch\/loopgate は入口 step:branch\/start から next で到達できません/);
+});
+
+test("同じ宛先への条件違い branches は別縁として残る（自分自身への to もループ縁になる）", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "flowbr2-"));
+  const flows = join(dir, "flows");
+  mkdirSync(flows, { recursive: true });
+  writeFileSync(
+    join(flows, "dup.json"),
+    JSON.stringify({
+      schemaVersion: 1,
+      flows: [
+        {
+          id: "dup",
+          steps: [
+            { id: "a", name: "a" },
+            {
+              id: "s",
+              name: "s",
+              kind: "gateway",
+              branches: [
+                { to: "t", label: "成功" },
+                { to: "t", label: "失敗" },
+                { to: "s", label: "自分へ再試行" },
+              ],
+            },
+            { id: "t", name: "t" },
+          ],
+        },
+      ],
+    }),
+  );
+  const out = join(dir, "graph.json");
+  const r = spawnSync(process.execPath, [join(import.meta.dirname, "bin", "merge.mjs"), "--flows", flows, "--out", out], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  const g = JSON.parse(readFileSync(out, "utf8"));
+  const toT = g.edges.filter((e) => e.source === "step:dup/s" && e.kind === "next" && e.target === "step:dup/t");
+  assert.deepEqual(toT.map((e) => e.metadata.label).sort(), ["失敗", "成功"]);
+  const self = g.edges.find((e) => e.source === "step:dup/s" && e.target === "step:dup/s");
+  assert.ok(self, "自身への分岐縁が残っていない");
+  assert.equal(self.metadata.loop, true);
+  assert.match(r.stdout, /ループ検出: step:dup\/s → step:dup\/s \(自分へ再試行\)/);
+});
+
+test("同一コード×同一格納先の読みと書きは access 別に別縁（信号順に依存しない）", (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "flowbr3-"));
+  const flows = join(dir, "flows");
+  mkdirSync(flows, { recursive: true });
+  writeFileSync(join(flows, "io.json"), JSON.stringify({ schemaVersion: 1, flows: [{ id: "x", steps: [{ id: "a", name: "a" }] }] }));
+  const mkSignals = (swapped) => {
+    const read = { signal: "sql-read", ref: "table/t", line: 2, snippet: "SELECT * FROM t" };
+    const write = { signal: "sql-write", ref: "table/t", line: 1, snippet: "INSERT INTO t SELECT * FROM u" };
+    return swapped ? [write, read] : [read, write];
+  };
+  const accessesOf = (swapped) => {
+    const scanPath = join(dir, "scan.json");
+    writeFileSync(
+      scanPath,
+      JSON.stringify({
+        schemaVersion: 1,
+        generatedAt: "2026-01-01T00:00:00.000Z",
+        root: "/fixture",
+        files: [{ path: "src/a.sql", lang: "sql", signals: mkSignals(swapped) }],
+        stores: [{ id: "store:table/t", name: "t", storeKind: "table" }],
+        boundaries: [],
+      }),
+    );
+    const out = join(dir, "g.json");
+    const r = spawnSync(process.execPath, [join(import.meta.dirname, "bin", "merge.mjs"), "--flows", flows, "--scan", scanPath, "--out", out], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    const g = JSON.parse(readFileSync(out, "utf8"));
+    return g.edges
+      .filter((e) => e.source === "code:src/a.sql" && e.target === "store:table/t")
+      .map((e) => e.metadata.access)
+      .sort();
+  };
+  assert.deepEqual(accessesOf(false), ["read", "write"]);
+  assert.deepEqual(accessesOf(true), ["read", "write"]);
 });
 
 test("gateway に branches が 1 本しかない場合は警告", (t) => {

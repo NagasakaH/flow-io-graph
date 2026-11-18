@@ -41,7 +41,11 @@ if (!template.includes(MARKER)) {
   process.stderr.write(`エラー: テンプレートにマーカー ${MARKER} がありません: ${opt.template}\n`);
   process.exit(1);
 }
-const html = template.replace(MARKER, payload).replaceAll("__TITLE__", escapeHtml(opt.title));
+// 順序が大事: 先にタイトル（payload 内の __TITLE__ を巻き込まない），
+// payload は関数で差し込む（コード抜粋に $& や $' があっても置換pecial扱いされない）
+const html = template
+  .replaceAll("__TITLE__", escapeHtml(opt.title))
+  .replace(MARKER, () => payload);
 mkdirSync(dirname(opt.out), { recursive: true });
 writeFileSync(opt.out, html);
 const kb = (Buffer.byteLength(html) / 1024).toFixed(0);
