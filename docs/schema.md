@@ -154,6 +154,8 @@ JSON にコメントを許す（JSONC）。`--flows` に渡したディレクト
   boundary、target は store）。型違反の注釈エッジは警告して捨てる
 - **注釈エッジの metadata は縁分けに効く**: 注釈の `next` に付けた `metadata.label` は
   定義縁と別縁として並び、戻る向き（`to` が自分より前）なら定義側と同じく `loop` が付く。
+  宛先 step の `order` も `metadata.order` に継承する（無いと展開時の行先一覧で
+  注釈だけの分岐が常に先頭に並ぶ）。
   注釈の `touches` の `metadata.access` は `read` / `write` / `invoke` / `unknown` だけ受理し、
   それ以外は警告して捨てる（捨てずに素通りさせると同一端点の縁に黙って統合される）
 - **出所は書き換え不可**: metadata 注釈の `set` に `provenance` を書いても拒否して警告する

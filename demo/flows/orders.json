@@ -30,7 +30,11 @@
           "id": "retry-gate",
           "name": "再試行判定",
           "kind": "gateway",
-          "description": "3 回目までは受注からやり直し、超えたら打ち切り",
+          // 打ち切りは失敗イベントを order-events に書いて通知ワーカーへ渡す。
+          // 成功（charge）と失敗、両方の経路に書き手が揃わないと
+          // 「打ち切りでも通知される」が図から追えない
+          "description": "3 回目までは受注からやり直し、超えたら打ち切り。打ち切り時は失敗イベントを order-events に書く",
+          "writes": ["queue/order-events"],
           "branches": [
             { "to": "receive", "label": "3回目まで再実行" },
             { "to": "notify", "label": "打ち切り（失敗通知）" }
@@ -46,6 +50,7 @@
         {
           "id": "notify",
           "name": "購入者通知",
+          "description": "order-events を消費して購入者に通知する（charge の成功イベントと打ち切りの失敗イベントの両方を受ける）",
           "reads": ["queue/order-events"],
           "writes": ["table/notifications"]
         }

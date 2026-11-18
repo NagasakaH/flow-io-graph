@@ -349,7 +349,8 @@ test("全展開 / 全たたむ と展開状態の hash 復元（共有 URL に�
     ["step:order-intake/gate-result", "step:order-intake/receive", "step:order-intake/retry-gate"]);
   assert.equal(await p2.locator('#flow-chart .step-box[data-expanded="true"]').count(), 3);
   assert.equal(await p2.locator('#flow-chart .step-box.gw[data-expanded="true"]').count(), 2, "復元後にひし形が開かない");
-  assert.equal(await p2.locator("#flow-chart .fc-side .fnode").count(), 3, "復元後にサイドカードが出ない");
+  // receive の 3 枚＋再試行判定が打ち切り時に書く order-events で 4 枚
+  assert.equal(await p2.locator("#flow-chart .fc-side .fnode").count(), 4, "復元後にサイドカードが出ない");
   assert.equal(await p2.locator("#flow-chart .sub-card.branch").count(), 4, "復元後に分岐の行先が出ない");
   assert.equal((await p2.textContent("#detail-panel .dt-name")).trim(), "payments");
   await p2.click("#btn-share");

@@ -98,6 +98,10 @@ function canonicalId(id) {
   return norm ? norm.id : null;
 }
 
+// touches が取れる access。判定と警告の両方から参照し、警告を読んだ人が正しい値を
+// 選べるようにする（unknown = 方向未判定）
+const TOUCH_ACCESS = ["read", "write", "invoke", "unknown"];
+
 // 縁の端点の型規則。注釈由来でも手作りでも、契約（docs/schema.md）の向きのまましか張らない
 const EDGE_SHAPE = {
   contains: (s, t) => s.kind === "flow" && t.kind === "step" && t.parent === s.id,
@@ -411,13 +415,16 @@ for (const file of [...(opt.annotation ?? [])].sort(byString)) {
       };
       const os = orderOf(e.source);
       const ot = orderOf(e.target);
+      // 宛先の順番を継承しないと、注釈だけで作った分岐が展開時の行先一覧で
+      // 常に 0 番目（定義の分岐より前）に並んでしまう
+      if (ot !== undefined) metadata.order = ot;
       if (os !== undefined && ot !== undefined && ot <= os) metadata.loop = true; // 定義側と同じ「戻る縁はループ」
       if (Object.keys(metadata).length === 0) metadata = undefined;
     } else if (kind === "touches") {
       const acc = e.metadata?.access;
       if (acc !== undefined) {
-        if (!["read", "write", "invoke", "unknown"].includes(acc)) {
-          warn(`${file}: touches の access "${acc}" が規則外なので縁を捨てました (${e.source} -> ${e.target}。read / write / invoke のいずれか)`);
+        if (!TOUCH_ACCESS.includes(acc)) {
+          warn(`${file}: touches の access "${acc}" が規則外なので縁を捨てました (${e.source} -> ${e.target}。${TOUCH_ACCESS.join(" / ")} のいずれか)`);
           continue;
         }
         metadata = { access: acc };

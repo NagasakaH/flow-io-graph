@@ -230,6 +230,13 @@ test("注釈 next の label は別縁として立ち、戻る向きは loop が�
   assert.equal(ab.find((e) => e.metadata?.label === "例外系").provenance, "llm");
   const back = graph.edges.find((e) => e.kind === "next" && e.source === "step:x/b" && e.target === "step:x/a");
   assert.equal(back.metadata.loop, true, "戻る向きなのに loop が付かない");
+  // 注釈だけの分岐も展開時の行先一覧は metadata.order で並ぶ。継承を忘れると
+  // 常に 0 番目（定義の分岐より前）に並んでしまう
+  const orderOf = (id) => graph.edges.find((e) => e.kind === "contains" && e.target === id)?.metadata?.order;
+  assert.ok(orderOf("step:x/b") !== undefined, "contains に order が入っていない（前提）");
+  assert.equal(ab.find((e) => e.metadata?.label === "例外系").metadata.order, orderOf("step:x/b"),
+    "注釈 next に宛先の順番が継承されない");
+  assert.equal(back.metadata.order, orderOf("step:x/a"), "戻る縁の注釈 next に順番が継承されない");
   const touch = graph.edges.find((e) => e.kind === "touches");
   assert.equal(touch.metadata.access, "read");
   assert.doesNotMatch(stderr, /規則外/);
@@ -243,6 +250,8 @@ test("注釈 next の label は別縁として立ち、戻る向きは loop が�
     },
   });
   assert.match(badAcc.stderr, /access "modify" が規則外/);
+  // 警告を読む人が正しい値を選べるよう、候補に unknown（方向未判定）も載せる
+  assert.match(badAcc.stderr, /read \/ write \/ invoke \/ unknown のいずれか/);
   assert.ok(!badAcc.graph.edges.some((e) => e.kind === "touches"), "不正 access の touches が残った");
 });
 
