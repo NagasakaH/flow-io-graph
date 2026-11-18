@@ -18,7 +18,7 @@
       "note": "consume が order-events を receive_message し、INSERT INTO notifications / UPDATE orders (notify.rb:7-18)"
     },
     {
-      "source": "step:order-intake/daily-report",
+      "source": "step:daily-report/daily-report",
       "target": "code:src/jobs/daily_report.js",
       "kind": "implemented-by",
       "confidence": 0.95,

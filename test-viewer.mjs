@@ -96,7 +96,7 @@ test("コンソールエラー 0 件で初期表示できる", async () => {
   const counts = await page.textContent("#status-bar");
   assert.match(counts, /表示 \d+ \/ 全 \d+ ノード/);
   assert.match(counts, /表示 \d+ \/ 全 \d+ 縁/);
-  assert.match(counts, /全 23 ノード/);
+  assert.match(counts, /全 24 ノード/);
 });
 
 test("ヘッダにタイトルと検索・フィルタ・ボタンがそろう", async () => {
@@ -115,21 +115,21 @@ test("ヘッダにタイトルと検索・フィルタ・ボタンがそろう",
 
 test("フロー図の既定はたたんだフローチャート（ボックスと ▼、分岐は側面の縁）", async () => {
   const boxes = page.locator('#flow-chart .step-box');
-  assert.equal(await boxes.count(), 6, "ステップボックスが 6 個無い");
+  assert.equal(await boxes.count(), 5, "ステップボックスが 5 個無い（日次レポートは別フロー）");
   const receive = page.locator('#flow-chart .step-box[data-node="step:order-intake/receive"]');
   assert.equal(await receive.count(), 1, "注文受信のボックスが無い");
   const txt = await receive.innerText();
   assert.match(txt, /注文受信/);
   for (const want of ["読 1", "書 1", "呼 1"]) assert.match(txt, new RegExp(want), "バッジが無い: " + want);
   const order = await page.locator("#flow-chart .step-box .nm").allInnerTexts();
-  assert.deepEqual(order, ["注文受信", "決済結果", "再試行判定", "決済確定", "購入者通知", "日次レポート"],
+  assert.deepEqual(order, ["注文受信", "決済結果", "再試行判定", "決済確定", "購入者通知"],
     "next の順（contains の order）が崩れている");
   // ▼ は線形 next の間だけ: gate-result -> retry-gate は分岐縁なので ▼ を置かない
   assert.deepEqual(await laneSeq(page),
-    ["開始", "▼", "receive", "▼", "gate-result", "retry-gate", "charge", "▼", "notify", "▼", "daily-report", "▼", "終了"],
+    ["開始", "▼", "receive", "▼", "gate-result", "retry-gate", "charge", "▼", "notify", "▼", "終了"],
     "▼ と開始／終了の位置が next 縁と合っていない");
-  // 線形 next の ▼ 3 本 + 開始・終了の目印の矢印 2 本
-  assert.equal(await page.locator("#flow-chart .fc-arrow").count(), 5, "▼ 矢印の本数が違う");
+  // 線形 next の ▼ 2 本 + 開始・終了の目印の矢印 2 本
+  assert.equal(await page.locator("#flow-chart .fc-arrow").count(), 4, "▼ 矢印の本数が違う");
   assert.deepEqual(await page.locator("#flow-chart .fc-term-row .term").allInnerTexts(), ["開始", "終了"],
     "フローの先頭・末尾の目印が無い");
   // 既定は左右の格納先カラムを出さない（3 列常時表示はやめた）
@@ -319,20 +319,20 @@ test("ステップをクリックすると入出力が展開され、もう一�
 test("全展開 / 全たたむ と展開状態の hash 復元（共有 URL にも載る）", async () => {
   await page.click("#btn-expand-all");
   await page.waitForSelector('#flow-chart .step-box[data-expanded="true"]', { timeout: 5000 });
-  await waitForEdgesAtLeast(page, 13);
-  assert.equal(await page.locator('#flow-chart .step-box[data-expanded="true"]').count(), 6, "全展開で 6 倀開かない");
+  await waitForEdgesAtLeast(page, 10);
+  assert.equal(await page.locator('#flow-chart .step-box[data-expanded="true"]').count(), 5, "全展開で 5 歩開かない");
   assert.equal(await page.locator('#flow-chart .step-box.gw[data-expanded="true"]').count(), 2, "分岐ノードが開かない");
   const cards = await page.locator("#flow-chart .fc-side .fnode").count();
-  assert.ok(cards >= 11, "全展開でのサイドカードが少ない: " + cards);
+  assert.ok(cards >= 8, "全展開でのサイドカードが少ない: " + cards);
   const paths = await page.locator("#flow-edges path.edge").count();
-  assert.ok(paths >= 17, "全展開の縁が少ない（I/O 13 + 分岐 4）: " + paths);
+  assert.ok(paths >= 14, "全展開の縁が少ない（I/O 10 + 分岐 4）: " + paths);
   const hash = await page.evaluate(() => location.hash);
   const expPart = (hash.match(/expanded=([^&]*)/) || [])[1] || "";
   assert.ok(!expPart.includes(","), "expanded が URL エンコードされていない: " + hash);
   assert.deepEqual(expPart.split("%2C").map(decodeURIComponent).sort(), [
-    "step:order-intake/charge", "step:order-intake/daily-report", "step:order-intake/gate-result",
+    "step:order-intake/charge", "step:order-intake/gate-result",
     "step:order-intake/notify", "step:order-intake/receive", "step:order-intake/retry-gate",
-  ], "expanded に 6 ステップ（gateway 含む）が揃わない: " + hash);
+  ], "expanded に 5 ステップ（gateway 含む）が揃わない: " + hash);
   await page.click("#btn-collapse-all");
   await page.waitForTimeout(200);
   assert.equal(await page.locator('#flow-chart .step-box[data-expanded="true"]').count(), 0, "全たたむが効いていない");
@@ -372,8 +372,9 @@ test("クロスハイライト: 展開中のストアを選ぶと結ばれた全
   await waitForHlEdges(page, 1);
   const hl = await page.evaluate(() => Array.from(document.querySelectorAll("#flow-chart .step-box.hl"))
     .map((b) => b.dataset.node + "=" + b.querySelector(".xcount").textContent));
-  assert.deepEqual(hl.sort(), ["step:order-intake/daily-report=1 縁", "step:order-intake/receive=1 縁"],
-    "注文受信と日次レポートが強調されない: " + JSON.stringify(hl));
+  // 日次レポートも orders を読むが別フローのため現ビューでは強調されない（別フローの縁は別ビューで見る）
+  assert.deepEqual(hl.sort(), ["step:order-intake/receive=1 縁"],
+    "注文受信が強調されない: " + JSON.stringify(hl));
   assert.equal(await page.locator('#flow-chart .step-box[data-node="step:order-intake/charge"].hl').count(), 0,
     "関係ない決済確定まで強調されている");
   const hlEdges = await page.evaluate(() => Array.from(document.querySelectorAll("#flow-edges path.edge.hl"))
@@ -701,8 +702,8 @@ test("縁の三角は終端接線と同じ向き（▼・分岐・ループ・�
       head: Math.atan2(p[5] - (p[1] + p[3]) / 2, p[4] - (p[0] + p[2]) / 2) * 180 / Math.PI,
     };
   });
-  // 線形 next の ▼ 3 本 + 開始／終了の目印の ▼ 2 本
-  assert.ok(dn && dn.arrows === 5, "▼ が SVG 矢印として描画されていない: " + JSON.stringify(dn));
+  // 線形 next の ▼ 2 本 + 開始／終了の目印の ▼ 2 本
+  assert.ok(dn && dn.arrows === 4, "▼ が SVG 矢印として描画されていない: " + JSON.stringify(dn));
   assert.ok(angDiff(dn.stem, dn.head) <= 10, "▼ の軸と三角の向きがズレている: " + JSON.stringify(dn));
   assert.ok(angDiff(dn.head, 90) <= 10, "▼ が真下を向いていない: " + dn.head);
   // 各縁: 実パスの終端接線を getPointAtLength で測り、三角の向き（data-tan）と入る辺の法線へ照合
@@ -1329,15 +1330,16 @@ test("読み取り縁の見た目の向きはグラフタブと詳細パネル�
     window.__segs.length = 0;
     gv.draw();
     const step = gv.pos.get("step:order-intake/receive");
-    const store = gv.pos.get("store:table/order-drafts");
+    const drafts = gv.pos.get("store:table/order-drafts"); // reads: 格納先 → タスク
+    const orders = gv.pos.get("store:table/orders"); // writes: タスク → 格納先（receive が実際に書く側）
     const d0 = (q, r) => Math.hypot(q[0] - r.x, q[1] - r.y);
     const d1 = (q, r) => Math.hypot(q[2] - r.x, q[3] - r.y);
-    const fromStore = window.__segs.filter((q) => d0(q, store) < 2);
+    const fromStore = window.__segs.filter((q) => d0(q, drafts) < 2);
     const fromStep = window.__segs.filter((q) => d0(q, step) < 2);
     return {
       fromStore: fromStore.length, fromStep: fromStep.length,
-      storeToStep: fromStore.filter((q) => d1(q, step) < d1(q, store)).length,
-      storeEndsAtStore: fromStep.filter((q) => d1(q, store) < d1(q, step)).length,
+      storeToStep: fromStore.filter((q) => d1(q, step) < d1(q, drafts)).length,
+      storeEndsAtStore: fromStep.filter((q) => d1(q, orders) < d1(q, step)).length,
     };
   });
   assert.ok(cv.fromStore >= 1, "格納先から出始める読み取り縁が canvas に無い（データ向きで描いている）: " + JSON.stringify(cv));
@@ -1649,7 +1651,7 @@ test("ローカル注釈をクリアするとグラフが埋め込みデータ�
   await page.click("#btn-clear-ann");
   await page.waitForFunction(() => !window.__flowViewer.state.byId.has("store:table/emaillog"));
   assert.equal(await page.evaluate(() => localStorage.getItem("flow-annotations")), null);
-  assert.equal(await page.evaluate(() => window.__flowViewer.state.graph.nodes.length), 23);
+  assert.equal(await page.evaluate(() => window.__flowViewer.state.graph.nodes.length), 24);
   assert.deepEqual(consoleErrors, []);
   await page.screenshot({ path: join(SHOTS, "05-flow-clean.png") });
   assert.ok(existsSync(join(SHOTS, "01-flow.png")));

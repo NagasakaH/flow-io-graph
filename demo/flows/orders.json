@@ -6,7 +6,7 @@
       "id": "order-intake",
       "name": "注文受付フロー",
       "owner": "orders-team",
-      "description": "受注から決済・通知・日次レポートまで",
+      "description": "受注から決済・通知まで",
       "steps": [
         {
           "id": "receive",
@@ -48,7 +48,17 @@
           "name": "購入者通知",
           "reads": ["queue/order-events"],
           "writes": ["table/notifications"]
-        },
+        }
+      ]
+    },
+    {
+      // 日次バッチは注文の成否と無関係な別系統。別フローにして
+      // 「購入者通知 → 日次レポート」という誤った進行縁を作らせない
+      "id": "daily-report",
+      "name": "日次レポート",
+      "owner": "analytics-team",
+      "description": "毎晩 orders を集計して daily.csv と analytics-bucket に配る別系統",
+      "steps": [
         {
           "id": "daily-report",
           "name": "日次レポート",

@@ -1144,12 +1144,24 @@ html[data-theme="light"] {
     return state.graph.nodes.filter(function (n) { return n.kind === "flow"; })
       .sort(function (a, b) { return a.name < b.name ? -1 : a.name > b.name ? 1 : 0; });
   }
+  // 既定で開くフローは「手順が一番多いフロー」（主フロー）。名前順の先頭だけ見ると、
+  // 1 ステップの別系統（日次レポートなど）が着地になって主フローが見えない
+  function primaryFlow() {
+    var best = null, bestN = -1;
+    flows().forEach(function (f) {
+      // 可視性で空振りすると主フローを選べないので、contains 縁の本数で数える
+      var n = 0;
+      state.graph.edges.forEach(function (e) { if (e.kind === "contains" && e.source === f.id) n++; });
+      if (n > bestN || (n === bestN && (!best || f.id < best.id))) { best = f; bestN = n; }
+    });
+    return best ? best.id : null;
+  }
   function renderFlowSelect() {
     var sel = $("#flow-select");
     var fs = flows();
     if (!fs.length) { sel.hidden = true; return; }
     sel.hidden = false;
-    if (!state.flowId || !state.byId.has(state.flowId)) state.flowId = fs[0].id;
+    if (!state.flowId || !state.byId.has(state.flowId)) state.flowId = primaryFlow();
     var want = state.flowId;
     if (sel.options.length !== fs.length || sel.value !== want) {
       clear(sel);
@@ -1287,7 +1299,7 @@ html[data-theme="light"] {
     if (!Array.isArray(state.graph.edges)) state.graph.edges = [];
     if (!Array.isArray(state.graph.warnings)) state.graph.warnings = [];
     reindex();
-    state.flowId = (flows()[0] || {}).id || null;
+    state.flowId = primaryFlow();
     graphView.reset();
     refresh();
   }
@@ -3578,7 +3590,7 @@ var row = sc.closest(".fc-row");
     state.ann = loadAnn();
     var logs = applyAnnDoc(state.ann);
     reindex();
-    state.flowId = (flows()[0] || {}).id || null;
+    state.flowId = primaryFlow();
     applyHash();
     applyTheme();   // data-theme を先に決める（hash の theme= は保存値より優先）
     $("#btn-theme").addEventListener("click", cycleTheme);
