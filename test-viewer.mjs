@@ -179,9 +179,14 @@ test("前方向ループ（metadata.loop）は左側を回る強調縁と ↺ �
   assert.equal(await loopPath.count(), 1, "retry-gate → receive のループ縁が描画されない");
   const d = await loopPath.getAttribute("d");
   const n = d.match(/[-\d.]+/g).map(Number);
-  const [x1, y1, cx1, , , , x3, y3, x2, y2] = n;
-  assert.ok(y2 < y1, "ループ縁が前方向に戻っていない: " + d);
-  assert.ok(cx1 < Math.min(x1, x2) - 6, "ループ縁がレーン左側を回っていない: " + d);
+  // M 出所 C .. .. ガター入口 L ガター走行 .. C .. .. 進入前 L 終点
+  const [x1, y1] = n;
+  const [gx, gy] = n.slice(6, 8);
+  const [x3, y3, x2, y2] = n.slice(-4);
+  assert.equal(await loopPath.getAttribute("data-route"), "loop", "ループ縁の経路種別が違う");
+  assert.ok(y2 < y1 - 40, "ループ縁が前方向に戻っていない: " + d);
+  assert.ok(gx < Math.min(x1, x2) - 6, "ループ縁がレーン左側を回っていない: " + d);
+  assert.ok(Math.abs(n[8] - gx) < 0.01 && gy > y1, "ガターが下頂点の直下から始まっていない: " + d);
   assert.ok(x3 === x2 && y3 > y2 + 6, "ループ縁が行き先の下辺へ上向きに届いていない: " + d);
   assert.equal(await loopPath.getAttribute("data-face"), "up", "ループ縁の入り方向が違う");
   const labels = await page.locator("#flow-edge-labels text.loop").evaluateAll((ts) => ts.map((t) => t.textContent.trim()));
@@ -576,6 +581,10 @@ test("hash 復元: #view=graph&flow=...&select=... で開くと選択が戻る",
 // ============================================================
 //  フェーズ 4: 矢印の向きとテーマ（ライトモード）
 // ============================================================
+function insidePt(p, d) {
+  return Math.abs(p.x - d.cx) / d.a + Math.abs(p.y - d.cy) / d.b <= 1;
+}
+
 const FACE_DEG = { down: 90, up: -90, right: 0, left: 180 };
 function angDiff(a, b) {
   let d = a - b;
@@ -673,6 +682,126 @@ test("縁の三角は終端接線と同じ向き（▼・分岐・ループ・�
   await page.screenshot({ path: join(SHOTS, "01f-arrow-angle.png") });
   await page.click("#btn-collapse-all");
   await page.waitForTimeout(250);
+});
+
+// ページ側で縁・ラベル・ひし形の幾何を実測する（たたむ／全展開の両方で呼ぶ）
+function flowGeomAudit() {
+  const fv = window.__flowViewer.flowView;
+  const m = fv.svg.getScreenCTM();
+  const to = (x, y) => ({ x: m.a * x + m.c * y + m.e, y: m.b * x + m.d * y + m.f });
+  const gws = Array.from(fv.lane.querySelectorAll(".step-box.gw")).map((b) => {
+    const r = b.getBoundingClientRect();
+    return {
+      node: b.dataset.node, cx: r.left + r.width / 2, cy: r.top + r.height / 2,
+      a: r.width / 2, b: r.height / 2, x0: r.left, y0: r.top, x1: r.right, y1: r.bottom,
+    };
+  });
+  const infos = Array.from(fv.lane.querySelectorAll(".step-box .info")).map((b) => {
+    const r = b.getBoundingClientRect();
+    return { node: b.parentElement.dataset.node, x0: r.left, y0: r.top, x1: r.right, y1: r.bottom };
+  });
+  const inside = (p, d) => Math.abs(p.x - d.cx) / d.a + Math.abs(p.y - d.cy) / d.b <= 0.96;
+  const paths = Array.from(fv.svg.querySelectorAll("path.edge[data-route]")).map((p) => {
+    const L = p.getTotalLength();
+    const steps = Math.max(10, Math.round(L / 4));
+    const pts = [];
+    for (let i = 0; i <= steps; i++) {
+      const q = p.getPointAtLength((L * i) / steps);
+      pts.push(to(q.x, q.y));
+    }
+    const start = pts[0];
+    const end = pts[pts.length - 1];
+    const bad = [];
+    pts.forEach((q) => {
+      if (Math.hypot(q.x - start.x, q.y - start.y) < 9 || Math.hypot(q.x - end.x, q.y - end.y) < 9) return;
+      gws.forEach((d) => {
+        if (inside(q, d)) bad.push(d.node + "@" + Math.round(q.x) + "," + Math.round(q.y));
+      });
+    });
+    return {
+      edge: p.getAttribute("data-edge"), route: p.getAttribute("data-route"), len: L,
+      hspan: p.getBBox().width, start: start, end: end, bad: bad,
+    };
+  });
+  const labels = Array.from(document.querySelectorAll("#flow-edge-labels text")).map((t) => {
+    const bg = t.previousElementSibling;
+    const bb = bg && bg.tagName === "rect" ? bg.getBBox() : t.getBBox();
+    const mm = t.ownerSVGElement.getScreenCTM();
+    const p0 = { x: mm.a * bb.x + mm.e, y: mm.d * bb.y + mm.f };
+    const p1 = { x: mm.a * (bb.x + bb.width) + mm.e, y: mm.d * (bb.y + bb.height) + mm.f };
+    return { text: t.textContent.trim(), x0: p0.x, y0: p0.y, x1: p1.x, y1: p1.y };
+  });
+  return { paths: paths, labels: labels, infos: infos, gws: gws };
+}
+
+const hitRect = (a, b) => a.x1 > b.x0 + 1 && b.x1 > a.x0 + 1 && a.y1 > b.y0 + 1 && b.y1 > a.y0 + 1;
+const ccw3 = (a, b, c) => (c.y - a.y) * (b.x - a.x) - (b.y - a.y) * (c.x - a.x) > 0;
+const segHit = (a, b, c, d) => ccw3(a, c, d) !== ccw3(b, c, d) && ccw3(a, b, c) !== ccw3(a, b, d);
+const rectCorner = (R, i) => ({ x: i % 2 ? R.x1 : R.x0, y: i < 2 ? R.y0 : R.y1 });
+
+function checkFlowGeom(rep, tag) {
+  assert.equal(rep.gws.length, 2, tag + ": 分岐ノードが 2 つ描画されていない");
+  assert.equal(rep.paths.length, 4, tag + ": 分岐・ループ縁の本数が違う: " + rep.paths.map((p) => p.edge).join(" / "));
+  // 1) ひし形のシルエット上を走る縁は無し（自ノードの頂点接続だけ許す）
+  for (const p of rep.paths) {
+    assert.deepEqual(p.bad, [], tag + ": 縁がひし形の中を横切っている: " + p.edge + " → " + p.bad.join(", "));
+  }
+  // 2) 出所は常に下頂点（右頂点からの多重放出をやめた）
+  for (const p of rep.paths) {
+    const src = rep.gws.find((d) => d.node === p.edge.split("|")[0]);
+    if (!src) continue;
+    assert.ok(Math.abs(p.start.x - src.cx) < 4, tag + ": 出所が下頂点の真下にない: " + p.edge);
+    assert.ok(Math.abs(p.start.y - src.y1) < 4, tag + ": 出所が下頂点から出ていない: " + p.edge);
+  }
+  // 3) ゲートウェイ間の「失敗」は頂点から頂点への垂直下降（水平成分 20% 未満）
+  const fail = rep.paths.find((p) => p.edge === "step:order-intake/gate-result|next|step:order-intake/retry-gate");
+  assert.ok(fail, tag + ": 失敗縁が無い");
+  assert.equal(fail.route, "vertex", tag + ": 失敗縁が頂点直結になっていない");
+  assert.ok(fail.hspan / fail.len < 0.2,
+    tag + ": 失敗縁の水平成分が大きすぎる: " + fail.hspan.toFixed(1) + "/" + fail.len.toFixed(1));
+  const dst = rep.gws.find((d) => d.node === "step:order-intake/retry-gate");
+  assert.ok(Math.abs(fail.end.x - dst.cx) < 4 && Math.abs(fail.end.y - dst.y0) < 4,
+    tag + ": 失敗縁が再試行判定の上頂点へ入っていない: " + JSON.stringify(fail.end));
+  // 4) 縁ラベルは ⓘ ともひし形の輪郭とも重ならない
+  for (const L of rep.labels) {
+    for (const I of rep.infos) {
+      assert.ok(!hitRect(L, I),
+        tag + ": ラベル「" + L.text + "」が ⓘ と重なっている: " + JSON.stringify(L) + " vs " + JSON.stringify(I));
+    }
+    for (const d of rep.gws) {
+      const V = [{ x: d.cx, y: d.y0 }, { x: d.x1, y: d.cy }, { x: d.cx, y: d.y1 }, { x: d.x0, y: d.cy }];
+      let hit = false;
+      for (let i = 0; i < 4 && !hit; i++) {
+        for (let j = 0; j < 4 && !hit; j++) {
+          if (segHit(V[i], V[(i + 1) % 4], rectCorner(L, j), rectCorner(L, (j + 1) % 4))) hit = true;
+        }
+      }
+      [0, 1, 2, 3].forEach((i) => { if (insidePt(rectCorner(L, i), d)) hit = true; });
+      assert.ok(!hit, tag + ": ラベル「" + L.text + "」がひし形の輪郭に掛かっている: " + JSON.stringify(L));
+    }
+  }
+  // 5) ⓘ はひし形の輪郭の内側（頂上付近）に置かない
+  for (const I of rep.infos) {
+    const d = rep.gws.find((g) => g.node === I.node);
+    if (!d) continue;
+    const c = { x: (I.x0 + I.x1) / 2, y: (I.y0 + I.y1) / 2 };
+    assert.ok(!insidePt(c, d), tag + ": 分岐ノードの ⓘ がひし形の中にある: " + I.node);
+  }
+  assert.ok(rep.labels.length >= 4, tag + ": 縁ラベルが少ない: " + rep.labels.map((l) => l.text).join("/"));
+}
+
+test("分岐縁は下頂点から出てひし形を横切らない（頂点のみ進入・ラベル重なり 0）", async () => {
+  await page.evaluate(() => window.__flowViewer.setView("flow"));
+  await page.click("#btn-collapse-all");
+  await page.waitForTimeout(200);
+  checkFlowGeom(await page.evaluate(flowGeomAudit), "たたんだ状態");
+  await page.screenshot({ path: join(SHOTS, "01g-branch.png") });
+  // 展開時はサイドカードがガターに重なるので、同じ検査を通す
+  await page.click("#btn-expand-all");
+  await page.waitForTimeout(300);
+  checkFlowGeom(await page.evaluate(flowGeomAudit), "全展開");
+  await page.screenshot({ path: join(SHOTS, "01h-branch-expanded.png") });
+  await page.click("#btn-collapse-all");
 });
 
 test("グラフタブ（canvas）の縁にも終端三角があり、向きは atan2 の実測と一致する", async () => {
@@ -944,7 +1073,7 @@ test("ローカル注釈をクリアするとグラフが埋め込みデータ�
   assert.ok(existsSync(join(SHOTS, "01-flow.png")));
   const shots = readdirSync(SHOTS).filter((f) => f.endsWith(".png"));
   assert.ok(shots.length >= 15, "スクリーンショットが足りない: " + shots.join(", "));
-  for (const need of ["01-flow.png", "01b-flow-expanded.png", "01d-loop.png", "01e-gateway.png",
+  for (const need of ["01-flow.png", "01b-flow-expanded.png", "01d-loop.png", "01e-gateway.png", "01g-branch.png",
     "01-flow-light.png", "01b-flow-light-expanded.png", "02-graph-light.png", "06-stores-light.png",
     "07-io-light.png", "08-code-light.png", "02c-graph-arrows.png"]) {
     assert.ok(shots.includes(need), "必須のスクリーンショットが無い: " + need);

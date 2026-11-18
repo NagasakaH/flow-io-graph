@@ -337,7 +337,11 @@ table.grid tbody tr.sel { background: var(--bg-sel); }
 .step-box.gw.expanded { width: 100%; padding: 30px 74px; }
 .step-box.gw .t, .step-box.gw .pvs { justify-content: center; }
 .step-box.gw .id, .step-box.gw .meta { text-align: center; }
-.step-box.gw .info { right: 32px; top: 50%; transform: translateY(-50%); }
+/* ⓘ は頂点上に置かない（頂点に刺さった縁と見分けがつかないため）。
+   ボックス bbox 右上の余白＝ひし形の輪郭の外に出す。上辺の傾きは緩やかなので角は常に外側。 */
+.step-box.gw .info { right: 6px; top: 6px; }
+/* 下頂点からの扇・頂点直結の短い垂直通路のため、次の行との間に余裕を空ける */
+.step-box.gw.fan-gap { margin-bottom: 26px; }
 .gwmark { color: var(--k-boundary); flex: none; font-size: 11px; }
 .b-io.g { color: var(--e-next); }
 .badge.loop { background: var(--loop-bg); color: var(--loop-fg); border-color: var(--loop-bd); }
@@ -1341,11 +1345,21 @@ html[data-theme="light"] {
           if (!md.label && !md.loop) return; // 線形 next は ▼ が担当
           var toEl = boxes.get(e.target);
           if (!toEl) return; // フィルタ外・「さらに表示」の先は描かない
-          var k = fan.get(id) || 0;
-          fan.set(id, k + 1);
+          var srcGw = fromEl.classList.contains("gw");
+          var dstGw = toEl.classList.contains("gw");
+          // ゲートウェイ同士の分岐は頂点から頂点への直結（ひし形の辺を横切らないため）
+          var vert = srcGw && dstGw && !md.loop;
+          var k = 0;
+          if (!vert) {
+            k = fan.get(id) || 0; // 頂点直結はガターを通らないので刻まない
+            fan.set(id, k + 1);
+          }
+          // 下頂点から扇を出す分、次の行との間隔を広げる（ループのみのノードは下らないので据え置き）
+          if (!md.loop) fromEl.classList.add("fan-gap");
           self.linkItems.push({
             link: true, edge: e, fromEl: fromEl, toEl: toEl,
             loop: !!md.loop, label: md.label || "", fan: k,
+            srcGw: srcGw, dstGw: dstGw, vert: vert,
           });
         });
       });
@@ -1569,12 +1583,16 @@ html[data-theme="light"] {
     measureEdges: function () {
       if (!this.built || !this.lane) return;
       var box = this.lane.getBoundingClientRect();
+      var sideGap = this.lane.querySelector(".fc-side .sub-card") ? 12 : 30;
       this.edgeItems.concat(this.linkItems).forEach(function (it) {
         if (!it.fromEl.isConnected || !it.toEl.isConnected) { it.d = null; it.bb = null; return; }
         var ra = it.fromEl.getBoundingClientRect(), rb = it.toEl.getBoundingClientRect();
-        var g = it.link ? stepLinkPath(box, ra, rb, it.loop, it.fan) : bezier(box, ra, rb);
+        // ガターの位置: 展開中はサイドカード列との 20px 通路に寄せ、たたんだときは外側 30px を取る
+        var g = it.link
+          ? stepLinkPath(box, ra, rb, it.loop, it.fan, it.srcGw, it.dstGw, it.vert, sideGap)
+          : bezier(box, ra, rb);
         it.d = g.d; it.tan = g.tan; it.face = g.face;
-        if (it.link) { it.lx = g.lx; it.ly = g.ly; }
+        if (it.link) { it.lx = g.lx; it.ly = g.ly; it.keepX = g.keepX; }
         it.bb = {
           y0: Math.min(ra.top, rb.top) - box.top - 8,
           y1: Math.max(ra.bottom, rb.bottom) - box.top + 8,
@@ -1583,7 +1601,7 @@ html[data-theme="light"] {
     },
     drawEdges: function () {
       if (!this.built || !this.lane) return;
-      var svg = this.svg, lbl = this.svgLbl;
+      var svg = this.svg, lbl = this.svgLbl, lane = this.lane;
       clear(svg); clear(lbl);
       var box = this.lane.getBoundingClientRect();
       var w = Math.max(this.lane.scrollWidth, box.width), h = Math.max(this.lane.scrollHeight, box.height);
@@ -1634,6 +1652,7 @@ html[data-theme="light"] {
         path.setAttribute("marker-end", "url(#mk-" + k + ")");
         path.setAttribute("data-tan", Math.round(it.tan));
         path.setAttribute("data-face", it.face || "");
+        if (it.link) path.setAttribute("data-route", it.vert ? "vertex" : (it.loop ? "loop" : "gutter"));
         // data-edge の種別は縁の実際の kind（ループも next）。見た目の色は class 側で分ける
         path.setAttribute("data-edge", it.edge.source + "|" + it.edge.kind + "|" + it.edge.target);
         var title = document.createElementNS("http://www.w3.org/2000/svg", "title");
@@ -1655,7 +1674,7 @@ html[data-theme="light"] {
         t.setAttribute("data-label", it.edge.source + "|" + it.edge.target);
         t.textContent = (it.loop ? "↺ " : "") + it.label;
         lbl.appendChild(t);
-        labels.push({ t: t, x: it.lx, y: it.ly, loop: !!it.loop, end: !!it.loop });
+        labels.push({ t: t, x: it.lx, y: it.ly, loop: !!it.loop, end: !!it.loop, keepX: !!it.keepX });
       });
       // ラベル配置: はみ出したものは縁の反対側へ回し、重なりは下へ押して避ける。
       // 同じ出所の分岐ラベルは同じ高さになりやすく、展開中はサイドカードとぶつかるため。
@@ -1671,13 +1690,19 @@ html[data-theme="light"] {
           if (r.right - box.left > mainRight) mainRight = r.right - box.left;
         });
       }
+      // 展開中のサイドカード（注釈チップ）の矩形。ガターのラベルが重なるので避ける
+      var obs = [];
+      Array.prototype.forEach.call(lane.querySelectorAll(".fc-side .sub-card"), function (n) {
+        var r = n.getBoundingClientRect();
+        obs.push({ x0: r.left - box.left, x1: r.right - box.left, y0: r.top - box.top, y1: r.bottom - box.top });
+      });
       var placed = [];
       labels.forEach(function (L) {
         var len = 0;
         try { len = L.t.getComputedTextLength(); } catch (e) { len = String(L.t.textContent).length * 11; }
         if (L.end) {
           if (L.x - len < 2) L.x = len + 2;
-        } else if (L.x + len > Math.min(w - 6, mainRight + 4)) {
+        } else if (!L.keepX && L.x + len > Math.min(w - 6, mainRight + 4)) {
           L.t.setAttribute("class", L.t.getAttribute("class") + " flip");
           L.end = true;
           L.x -= 14;
@@ -1692,6 +1717,25 @@ html[data-theme="light"] {
           }
           if (hitY === null) break;
           L.y = hitY + 17;
+        }
+        // サイドカードに重なるラベルは下へ押し出す（大きく避けきれないときは土台で読ませる）
+        var shifted = 0;
+        for (var k4 = 0; k4 < 4 && shifted <= 44; k4++) {
+          var need = null;
+          for (var k5 = 0; k5 < obs.length; k5++) {
+            var O = obs[k5];
+            if (L.x1 > O.x0 - 3 && L.x0 < O.x1 + 3 && L.y + 8 > O.y0 && L.y - 8 < O.y1) {
+              var nd = O.y1 + 9 - L.y;
+              if (need === null || nd > need) need = nd;
+            }
+          }
+          if (need === null || need > 44) break;
+          L.y += need;
+          shifted += need;
+        }
+        for (var k6 = 0; k6 < placed.length; k6++) {
+          var Q = placed[k6];
+          if (L.x1 > Q.x0 - 5 && L.x0 < Q.x1 + 5 && Math.abs(L.y - Q.y) < 17) L.y = Q.y + 17;
         }
         L.t.setAttribute("x", L.x.toFixed(1));
         L.t.setAttribute("y", L.y.toFixed(1));
@@ -1828,53 +1872,58 @@ html[data-theme="light"] {
     }
     return null;
   }
-  // ステップ ⇄ ステップの縁。分岐はレーン右側、前方向ループは左側を回る。
-  // ラベルは曲線の途中点（t=0.5）に置く。
-    // 分岐・ループ縁。レーンの側面を回ってから、行き先ボックスの上辺（または下辺）に
-  // 垂直に入る。終端の制御点を面の外側法線に置くので三角マーカーは必ず下（上）を向く。
-  function stepLinkPath(box, ra, rb, loop, fan) {
-    var y1 = ra.top - box.top + ra.height / 2;
-    var x1 = loop ? ra.left - box.left : ra.left - box.left + ra.width;
-    var rx = rb.left - box.left, rw = rb.width;
-    var bcy = rb.top - box.top + rb.height / 2;
-    var down = bcy >= y1;
-    var off = 13 + (fan || 0) * 20;
-    var cx = loop ? Math.max(6, Math.min(x1, rx) - off) : Math.max(x1, rx + rw) + off;
-    // ▼ と重ならない位置へ入る（分岐は右寄り、ループは左寄り）
-    var ex = rx + rw * (loop ? 0.26 : 0.74);
-    var y2 = down ? rb.top - box.top : rb.bottom - box.top;
+  // 分岐・ループ縁（ラベル付き next / metadata.loop）の経路。フローチャートの定石に寄せる。
+  //  - 出所は常に下端頂点（ひし形なら下頂点）に集約し、頂点の直下で扇状に分かれて
+  //    左右のガター（ボックス外側 30px からの廊下、同一出所は 18px 刻み）を走る。
+  //    右頂点からの多重放出をやめ、ひし形のシルエット上を横切らない。
+  //  - ゲートウェイ同士の分岐は頂点から頂点への短い垂直下降（自然な「次」に見える）。
+  //  - 行き先はボックスなら上辺 74%（ループは下辺 26%）、ひし形なら上頂点のみ。
+  //    辺の途中には刺さない。
+  //  - 終端は必ず面の外側法線上の直進区間（stub）なので、三角マーカーは必ず下（上）を向く。
+  function stepLinkPath(box, ra, rb, loop, fan, srcGw, dstGw, vert, gBase) {
+    var aw = ra.width;
+    var ax = ra.left - box.left, ab = ra.bottom - box.top;
+    var acx = ax + aw / 2;
+    var bw = rb.width;
+    var bx = rb.left - box.left, bt = rb.top - box.top, bb = rb.bottom - box.top;
+    var bcx = bx + bw / 2;
+    var f = fan || 0;
+    // ゲートウェイ ⇔ ゲートウェイ: 下頂点から上頂点への短い垂直下降
+    if (vert && !loop) {
+      var dv = Math.max(9, Math.min(30, (bt - ab) * 0.4));
+      return {
+        d: "M" + acx + "," + ab + " C" + acx + "," + (ab + dv) + " " + bcx + "," + (bt - dv) + " " + bcx + "," + bt,
+        tan: 90, face: "down", keepX: true,
+        lx: Math.max(acx, bcx) + 8, ly: (ab + bt) / 2,
+      };
+    }
+    var down = bt >= ab;
     var sg = down ? 1 : -1;
-    var stub = Math.max(10, Math.min(24, Math.abs(y2 - y1) * 0.3));
-    var ym = y2 - sg * stub;
-    var dd = Math.max(12, Math.min(46, Math.min(Math.abs(ym - y1), Math.abs(ex - cx)) * 0.6));
-    var cy = ym - sg * dd;
-    var pts = [[x1, y1], [cx, y1], [ex, cy], [ex, ym]];
-    // ラベルは「レーンの側面を走っている」区間の、弧長 45% 付近に置く。
-    // 終点は行き先の真上なのでそこだと分かりにくく、同じ出所の分岐同士も重なる。
-    var best = pts[0], bd = Infinity, bestRun = null, bestRunD = Infinity, prev = pts[0], total = 0;
-    var segs = [];
-    for (var i = 1; i <= 20; i++) {
-      var pt = cubicAt(pts, i / 20);
-      total += Math.hypot(pt[0] - prev[0], pt[1] - prev[1]);
-      segs.push([pt, total]);
-      prev = pt;
-    }
-    for (var j = 0; j < segs.length; j++) {
-      var q = segs[j], dx = Math.abs(q[0][0] - cx);
-      if (dx < bd) { bd = dx; best = q[0]; }
-      if (dx <= 10) {
-        var rd = Math.abs(q[1] / Math.max(1, total) - 0.45);
-        if (rd < bestRunD) { bestRunD = rd; bestRun = q[0]; }
-      }
-    }
-    if (bestRun) best = bestRun;
+    var laneGap = gBase || 30;
+    var gx = loop ? Math.min(ax, bx) - (laneGap + f * 18) : Math.max(ax + aw, bx + bw) + (laneGap + f * 18);
+    gx = Math.max(10, Math.min(box.width - 10, gx));
+    var x1 = acx, y1 = ab;
+    var fy = ab + 14 + f * 8;                          // 頂点直下の扇出口（同じ出所は刻む）
+    var ex = dstGw ? bcx : bx + bw * (loop ? 0.26 : 0.74);
+    var y2 = down ? bt : bb;
+    var stub = Math.max(10, Math.min(22, Math.abs(y2 - fy) * 0.25));
+    var ym = y2 - sg * stub;                           // 終点直前の直進区間の始まり
+    var d1 = Math.max(9, Math.min(20, Math.abs(fy - y1) * 0.6));
+    var d2 = Math.max(10, Math.min(48, Math.abs(ym - fy) * 0.45, Math.abs(ex - gx) * 0.7));
+    var yt = down ? Math.max(fy + 2, ym - d2) : Math.min(fy - 2, ym + d2);
+    var dd = Math.abs(ym - yt);
     return {
-      d: "M" + x1 + "," + y1 + " C" + cx + "," + y1 + " " + ex + "," + cy + " " + ex + "," + ym +
+      d: "M" + x1 + "," + y1 +
+         " C" + x1 + "," + (y1 + d1) + " " + gx + "," + (fy - d1) + " " + gx + "," + fy +
+         " L" + gx + "," + yt +
+         " C" + gx + "," + (yt + sg * dd) + " " + ex + "," + (ym - sg * dd) + " " + ex + "," + ym +
          " L" + ex + "," + y2,
       tan: sg > 0 ? 90 : -90,
       face: down ? "down" : "up",
-      lx: best[0] + (loop ? -5 : 5),
-      ly: best[1] + (fan || 0) * 6,
+      keepX: true,
+      // ラベルは扇の出口直後、ガターを走る縁に沿わせる
+      lx: gx + (loop ? -8 : 8),
+      ly: fy + (down ? 18 : -13),
     };
   }
 
@@ -1918,14 +1967,6 @@ html[data-theme="light"] {
       tan: Math.atan2(ny, nx) * 180 / Math.PI,
       face: face,
     };
-  }
-  // 3 次ベジェの t の点
-  function cubicAt(p, t) {
-    var u = 1 - t;
-    return [
-      u * u * u * p[0][0] + 3 * u * u * t * p[1][0] + 3 * u * t * t * p[2][0] + t * t * t * p[3][0],
-      u * u * u * p[0][1] + 3 * u * u * t * p[1][1] + 3 * u * t * t * p[2][1] + t * t * t * p[3][1],
-    ];
   }
 
   // ==========================================================
