@@ -626,6 +626,15 @@ html[data-theme="light"] {
   var TABLE_CAP = 400;
   var FLOW_COL_CAP = 250;
   var EDGE_CULL_MIN = 400; // これを超える縁は画面外を描かない
+  // ガター通路の間隔。通路（chan）と扇（fan）の刻みは互いに素になる組み合わせにする。
+  // 倍数にすると ch1,f0 と ch0,f2 が同じ x に潰えて別の縁が見えなくなる。
+  // 目盛りは通路 30 / 扇 9。通路は扇の幅（9×3=27）より広くして、通路1・扇0 が
+  // 通路0・扇3 と同じ x に潰れないようにする。従来の 18/9 は通路1・扇0 と
+  // 通路0・扇2 が同じ x になっていた。展開中の目盛りをたたんだときとちがう値に
+  // すると、全展開のときだけ縁ラベルの土台がサイドカード列の上へ出る（合成検査の実測）たたんだときの基線はサイド列の分だけ外側、
+  // 展開中は従来どおり 4 のぶんから出す
+  var LANE_PITCH = 30, FAN_PITCH = 9;            // たたんだとき（サイド列が空で広い）
+  var LANE_PITCH_OPEN = 30, FAN_PITCH_OPEN = 9;  // 展開中（サイドカードと中央のあいだ）
   var CAND_CAP = 200;
   var SEARCH_CAP = 50;
 
@@ -1516,20 +1525,43 @@ html[data-theme="light"] {
           if (cross && s0 > s1) it.side = "left";
         });
       });
-      // 通路の深さを出所ごとに決める。下の行から出る縁ほど内側、上の行から出る縁ほど外側。
-      // 逆だと下の行の縁が上の行の通路を跨ぎ、途中のボックスの背後に隠れるため。
+      // 通路の割り当て: 同じ側で「またぐ行区間」が重なる縁は違う縦線を通す（first-fit）。
+      // 上の行で始まる縁から順に、区間が空いている通路へ入れ、使い終えた通路は再利用する。
+      // 必要通路数は「同時にまたぐ最大本数」でしか増えないので、戻る縁が 20 本あっても
+      // 同じ x に潰れない（出所ごとに通路を割り当てると本数ぶん必要になり、幅が足りて
+      // 深い通路が x=10 に張り付いていた）。
+      var laneUnits = { left: null, right: null };
       ["left", "right"].forEach(function (side) {
-        var srcs = [];
-        self.linkItems.forEach(function (it) {
-          if (it.side === side && srcs.indexOf(it.fromEl) < 0) srcs.push(it.fromEl);
+        var mine = [];
+        self.linkItems.forEach(function (it) { if (it.side === side) mine.push(it); });
+        mine.sort(function (a, b) {
+          var d = (idx.get(a.edge.source) || 0) - (idx.get(b.edge.source) || 0);
+          if (d) return d;
+          d = (idx.get(a.edge.target) || 0) - (idx.get(b.edge.target) || 0);
+          if (d) return d;
+          return (a.fan || 0) - (b.fan || 0);
         });
-        srcs.sort(function (a, b) {
-          return (idx.get(b.dataset.node) || 0) - (idx.get(a.dataset.node) || 0);
+        var laneEnds = [];   // 各通路がいまだoccupiedな行の下端
+        var deep = 0, deepOpen = 0;
+        mine.forEach(function (it) {
+          // 通路が必要なのは戻る縁だけ。行きの縁は扇（fan）で横にずれているので、
+          // それ以上に深い通路へ送るとサイドカード列の上まで出てしまう
+          if (!it.back || it.self) { it.chan = 0; return; }
+          var s0 = idx.get(it.edge.source) || 0, t0 = idx.get(it.edge.target) || 0;
+          var lo = Math.min(s0, t0), hi = Math.max(s0, t0);
+          var k = -1;
+          for (var li = 0; li < laneEnds.length; li++) {
+            if (laneEnds[li] < lo) { k = li; break; }   // この通路は空いている
+          }
+          if (k < 0) { laneEnds.push(hi); k = laneEnds.length - 1; }
+          else laneEnds[k] = hi;
+          it.chan = k;
+          deep = Math.max(deep, k * LANE_PITCH + (it.fan || 0) * FAN_PITCH);
+          deepOpen = Math.max(deepOpen, k * LANE_PITCH_OPEN + (it.fan || 0) * FAN_PITCH_OPEN);
         });
-        self.linkItems.forEach(function (it) {
-          if (it.side === side) it.chan = srcs.indexOf(it.fromEl);
-        });
+        laneUnits[side] = { deep: deep, deepOpen: deepOpen, lanes: laneEnds.length };
       });
+      this.laneUnits = laneUnits;
     },
     termRow: function (label) {
       return el("div", { class: "fc-row fc-term-row" },
@@ -1785,6 +1817,25 @@ html[data-theme="light"] {
       if (!this.built || !this.lane) return;
       var box = this.lane.getBoundingClientRect();
       var sideGap = this.lane.querySelector(".fc-side > *") ? 12 : 30;
+      // 戻る縁の通路は行の gap のそと（サイド列の領域）へ出る。狭い画面ではそれを
+      // 横スクロールに任せるため行の最小幅だけ広げる（無理に丸めて同じ x に戻すと
+      // 「どの工程からどこへ戻る」が追えなくなる）。広い画面で行の gap や最小幅を
+      // 変えるとサイド列の幅を削って内スクロールになり、縁が描けなくなる
+      // （合成検査で実測）。だからここは狭い画面限定にする
+      var lu = this.laneUnits || { left: null, right: null };
+      var deep = Math.max(lu.left ? (sideGap <= 14 ? lu.left.deepOpen : lu.left.deep) : 0,
+        lu.right ? (sideGap <= 14 ? lu.right.deepOpen : lu.right.deep) : 0);
+      if (sideGap <= 14) deep = Math.max(0, deep - 4 + sideGap);   // 展開中は 4 のぶんから出る
+      var minW = 0;
+      if (deep > 0 && box.width < 900) {
+        minW = 440 + 20 * 2 + 2 * Math.min(170, Math.max(20, sideGap + deep + 8));
+      }
+      for (var ci = 0; ci < this.lane.children.length; ci++) {
+        var cc = this.lane.children[ci];
+        if (!cc.classList || !cc.classList.contains("fc-row")) continue;
+        cc.style.columnGap = "";
+        cc.style.minWidth = minW ? minW + "px" : "";
+      }
       // サイド列は行高を変えない代わりに、行き過ぎた分だけその行ぶん＋αで_self内スクロールにする
       Array.prototype.forEach.call(this.lane.querySelectorAll(".fc-side"), function (sc) {
 var row = sc.closest(".fc-row");
@@ -1803,6 +1854,14 @@ var row = sc.closest(".fc-row");
           hw: r.width / 2, hh: r.height / 2,
         });
       });
+      // 行を最小幅まで広げたぶんはみ出すので、x の丸め上限はレーンの実幅でなく内容幅
+      var contentW = box.width;
+      for (var cw = 0; cw < this.lane.children.length; cw++) {
+        var ck = this.lane.children[cw];
+        if (ck === this.svg || ck === this.svgLbl || ck.nodeType !== 1) continue;
+        var cr = ck.getBoundingClientRect();
+        if (cr.right - box.left > contentW) contentW = cr.right - box.left;
+      }
       var svgProbe = this.svg;
       this.edgeItems.concat(this.linkItems).forEach(function (it) {
         if (!it.fromEl.isConnected || !it.toEl.isConnected) { it.d = null; it.bb = null; return; }
@@ -1821,6 +1880,7 @@ var row = sc.closest(".fc-row");
           ? stepLinkPath(box, ra, rb, { probe: svgProbe, others: obs,
               loop: it.loop, self: it.self, side: it.side, up: !!it.back, chan: it.chan, fan: it.fan,
               srcGw: it.srcGw, dstGw: it.dstGw, vert: it.vert, vfan: it.vfan, gBase: sideGap,
+              clampW: contentW,
             })
           : bezier(box, ra, rb, it.vertical);
         it.d = g.d; it.tan = g.tan; it.face = g.face;
@@ -1882,6 +1942,9 @@ var row = sc.closest(".fc-row");
       }
       var skipped = 0;
       var labels = [];
+      // 縁の終端（矢印）のまわりはラベルを置かない場所として覚える。矢印の先がラベルに
+      // 隠れると「どの縁がどこへ行くのか」が読めなくなる
+      var arrows = [];
       items.forEach(function (it) {
         if (!it.d) return;
         var k = it.edge.kind;
@@ -1910,6 +1973,14 @@ var row = sc.closest(".fc-row");
         path.style.cursor = "pointer";
         path.addEventListener("click", function () { openEdge(it.edge); });
         svg.appendChild(path);
+        try {
+          var ln = path.getTotalLength();
+          var ekey = it.edge.source + "|" + it.edge.kind + "|" + it.edge.target;
+          for (var q = Math.max(0, ln - 10); q <= ln; q += 2) {
+            var pp = path.getPointAtLength(q);
+            arrows.push({ k: ekey, x0: pp.x - 2, x1: pp.x + 2, y0: pp.y - 2, y1: pp.y + 2 });
+          }
+        } catch (e) { /* 長さが測れない縁は無視する */ }
         if (!it.link || !it.label) return;
         // ラベルはカードより上のレイヤに置く（展開中でも読める）
         var t = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -1922,14 +1993,23 @@ var row = sc.closest(".fc-row");
         lbl.appendChild(t);
         var lrow = lane.querySelector('.step-box[data-node="' + cssEscape(it.edge.source) + '"]');
         labels.push({
-        t: t, x: it.lx, y: it.ly, loop: !!it.loop,
+        t: t, x: it.lx, y: it.ly, loop: !!it.loop, soft: !!it.loop,
+        key: it.edge.source + "|" + it.edge.kind + "|" + it.edge.target,
         end: !!it.loop || !!it.endAnchor, keepX: !!it.keepX,
         row: lrow ? lrow.closest(".fc-row") : null,
+        from: it.fromEl, to: it.toEl,
       });
       });
       // ラベル配置: はみ出したものは縁の反対側へ回し、重なりは下へ押して避ける。
       // 同じ出所の分岐ラベルは同じ高さになりやすく、展開中はサイドカードとぶつかるため。
       labels.sort(function (a, b) { return a.y - b.y; });
+      // 中央カードも障害物として避けるのは、行が画面幅に収まりきらない狭い画面だけ
+      // （360px でラベルが中央カードの上端に乗った）。広い画面で中央カードまで
+      // 避けたとき、代わりに縁の矢印の上へ退避してしまう事例が合成検査で出たため
+      var tight = (lane.parentElement ? lane.parentElement.clientWidth : 1e9) < 900;
+      // 矢印を障害物にするのも狭い画面だけ。広い画面では中央カードを数えないので、
+      // 矢印まで避けると行き場の無い長い条件ラベルがサイドカードに乗ってしまう
+      var arrowObs = tight ? arrows : [];
       // メイン列（ボックスが並ぶ帯）の右端。ラベルがここからはみ出すなら縁の左側へ寄せる
       // （展開中は右のサイドカードと重なり、注釈チップの文字と二重に見えるため）。
       var mainRight = w;
@@ -1941,11 +2021,28 @@ var row = sc.closest(".fc-row");
           if (r.right - box.left > mainRight) mainRight = r.right - box.left;
         });
       }
-      // 展開中のサイドカード（注釈チップ）の矩形。ガターのラベルが重なるので避ける
+      // 回避対象: 展開中のサイドカード（注釈チップ）と中央のカード。360px など狭い幅では
+      // サイド列が詰んでガターに余白が残らず、土台が中央カードの上端に乗ってしまう。
+      // 縁の出所そのものは除く（自分のカードから扇を出す場所なので乗ってよい）。
+      // 宛先カードは障害物として見る――たたむとラベルが宛先カードの上端に乗った
       var obs = [];
       Array.prototype.forEach.call(lane.querySelectorAll(".fc-side > *"), function (n) {
         var r = n.getBoundingClientRect();
-        obs.push({ x0: r.left - box.left, x1: r.right - box.left, y0: r.top - box.top, y1: r.bottom - box.top });
+        obs.push({
+          el: n,
+          x0: r.left - box.left, x1: r.right - box.left, y0: r.top - box.top, y1: r.bottom - box.top,
+        });
+      });
+      // 中央のカード（360px などではガターが無く、ラベルが中央カードの上端に乗る）。
+      // soft として印を付け、最優先で避ける対象にする。サイド列と中央列の両方で
+      // 退避先が尽くときだけは soft を捨てて従来どおりサイド列だけ避える（混雑合成で、
+      // 中央まで避えると退避先が無く元の位置に残るケースがあった）
+      Array.prototype.forEach.call(lane.querySelectorAll(".step-box"), function (n) {
+        var r = n.getBoundingClientRect();
+        obs.push({
+          el: n, soft: true,
+          x0: r.left - box.left, x1: r.right - box.left, y0: r.top - box.top, y1: r.bottom - box.top,
+        });
       });
       var placed = [];
       var pad = 3;
@@ -1979,30 +2076,86 @@ var row = sc.closest(".fc-row");
         var rectAt = function (y) {
           return { x0: L.x + rdx, x1: L.x + rdx + rw, y0: y + rdy, y1: y + rdy + rh };
         };
-        // 候補位置のたびに「サイドカード」と「すでに置いたラベルの土台」の両方を見る。
+        // 回避先は「元の位置から近い順」に探す。押し出しを繰り返すと、カードを避けて
+        // 上へ戻した瞬間にさっき置いたラベルへ乗り、その往復で行き場所を失う
+        // （360px の混雑で行内で上下に挟まれると起きていた）。
+        // 見る相手はサイドカード＋中央カード（出所自身は除く）と、すでに置いたラベルの土台。
         // ベースライン±8 の概算でやると、土台はベースラインより 13px ほど上に伸びるため
         // カードの上端（出所チップ）に乗ったまま「避けた」ことになっていた
-        var R = rectAt(L.y);
-        for (var guard = 0; guard < 8; guard++) {
-          var need = null;
+        // 回避先は「元の位置から近い順」「下を先に使い切る」で探す（上を混ぜると同じ行の
+        // 後から置くラベルの行き場がなくなり、ラベル同士が積み重なる）。見る相手は
+        // 段階的に減らす: 0=サイドカード・中央カード・他のラベル・矢印の全部、
+        // 1=他のラベルを後回し、2=中央カードも後回し、3=サイドカードだけ（従来）。
+        // 全部を条件にすると混雑した全展開で行き場が無くなる。HEAD でも同行の
+        // ラベル同士は重なっているので、他のラベルは中央カードより後回しにする
+        var fits = function (Rc, off) {
+          // 当たり判定は実測の土台（.lbl-bg）でするので、置き場所は 2px 多めに見て、
+          // 1〜2px のすり抜け（カードの上端へのギリギリの寄りかかり）を残さない
+          var Rm = { x0: Rc.x0 - 2, y0: Rc.y0 - 2, x1: Rc.x1 + 2, y1: Rc.y1 + 2 };
           for (var i2 = 0; i2 < obs.length; i2++) {
             var O = obs[i2];
-            if (cross(R, O)) {
-              var nd = O.y1 + 3 - R.y0;
-              if (need === null || nd > need) need = nd;
+            if ((off & 2) && O.soft) continue;
+            if (!((L.from && O.el === L.from) || !cross(Rm, O))) return false;
+          }
+          if (!(off & 1)) {
+            for (var i3 = 0; i3 < placed.length; i3++) {
+              if (cross(Rm, placed[i3].rect)) return false;
             }
           }
-          for (var i3 = 0; i3 < placed.length; i3++) {
-            var Q = placed[i3].rect;
-            if (cross(R, Q)) {
-              var nd2 = Q.y1 + 3 - R.y0;
-              if (need === null || nd2 > need) need = nd2;
+          if (!(off & 4)) {
+            for (var i4 = 0; i4 < arrowObs.length; i4++) {
+              // 終端に錨を置くラベル（↺ と flip）は自分の矢印のそばに置く設計なので数えない。
+              // 検査はラベルの文字（土台より小さい）と矢印の先を見るので余白なしで判定する
+              if (L.end && arrowObs[i4].k === L.key) continue;
+              if (cross(Rc, arrowObs[i4])) return false;
             }
           }
-          // 大きく避けきれないときはこれ以上下がらない（行間を広げて避ける側に回す）
-          if (need === null || need > 44) break;
-          L.y += need;
-          R = rectAt(L.y);
+          return true;
+        };
+        var ladder = [0, 1, 2, 3];   // 見る相手を減らす順（上のコメント参照）
+        var scan = function (off) {
+          for (var d = 1; d <= 64; d++) {
+            if (fits(rectAt(L.y + d), off)) return d;
+          }
+          for (var d2 = 1; d2 <= 64; d2++) {
+            if (fits(rectAt(L.y - d2), off)) return -d2;
+          }
+          return null;
+        };
+        var R = rectAt(L.y);
+        if (tight) {
+          // ループラベル（↺ を含む）は中央カードを数えない（後回し）
+          var soft0 = !!L.soft;
+          if (!fits(R, soft0 ? 2 : 0)) {
+            for (var li = 0; li < ladder.length; li++) {
+              var mv = scan(ladder[li]);
+              if (mv !== null) { L.y += mv; R = rectAt(L.y); break; }
+            }
+          }
+        } else {
+          // 行が画面に収まる幅では従来どおり「ぶつかった相手のすぐ下まで下げる」。
+          // 上へ上がると同じ行の後から置くラベルの行き場が失われる（合成検査の実測）
+          for (var guard = 0; guard < 8; guard++) {
+            var need = null;
+            for (var i5 = 0; i5 < obs.length; i5++) {
+              var O2 = obs[i5];
+              if (O2.soft || (L.from && O2.el === L.from)) continue;
+              if (cross(R, O2)) {
+                var nd = O2.y1 + 3 - R.y0;
+                if (need === null || nd > need) need = nd;
+              }
+            }
+            for (var i6 = 0; i6 < placed.length; i6++) {
+              var Q = placed[i6].rect;
+              if (cross(R, Q)) {
+                var nd2 = Q.y1 + 3 - R.y0;
+                if (need === null || nd2 > need) need = nd2;
+              }
+            }
+            if (need === null || need > 44) break;
+            L.y += need;
+            R = rectAt(L.y);
+          }
         }
         L.rect = R;
         L.t.setAttribute("y", L.y.toFixed(1));
@@ -2022,12 +2175,17 @@ var row = sc.closest(".fc-row");
         var gapRows = [];
         labels.forEach(function (L) {
           if (!L.rect) return;
-          for (var k8 = 0; k8 < obs.length; k8++) {
-            if (cross(L.rect, obs[k8])) {
-              if (L.row && gapRows.indexOf(L.row) < 0) gapRows.push(L.row);
-              break;
-            }
+          // 退避でも空かなかった重なり（カード・他のラベルの土台）は行間を広げて作る
+          var hit = false;
+          for (var k8 = 0; k8 < obs.length && !hit; k8++) {
+            var lsoft = !!L.soft || !tight;
+            if (!(L.from && obs[k8].el === L.from) && !(lsoft && obs[k8].soft) &&
+                cross(L.rect, obs[k8])) hit = true;
           }
+          for (var k9 = 0; k9 < placed.length && !hit; k9++) {
+            if (placed[k9] !== L && cross(L.rect, placed[k9].rect)) hit = true;
+          }
+          if (hit && L.row && gapRows.indexOf(L.row) < 0) gapRows.push(L.row);
         });
         if (gapRows.length) {
           this._gapPass = true;   // 測り直しは 1 度だけ（発散させない）
@@ -2197,11 +2355,13 @@ var row = sc.closest(".fc-row");
     var bx = rb.left - box.left, bt = rb.top - box.top, bb = rb.bottom - box.top;
     var bcx = bx + bw / 2, bcy = bt + bh / 2;
     var f = o.fan || 0, ch = o.chan || 0;
-    var depth = (o.gBase || 30) + ch * 18 + f * 9;
-    // 展開中はサイドカードと中央のあいだの 20px 通路しか通れない。レーン数が多いときは
-    // 通路内で折り返し、同じ x に潰して見えなくしない（狭いので間隔は詰まる）
-    if ((o.gBase || 30) <= 14) depth = 4 + ((ch * 18 + f * 9) % 15);
-    var clampX = function (x) { return Math.max(10, Math.min(box.width - 10, x)); };
+    var open = (o.gBase || 30) <= 14;
+    var depth = (open ? 4 : (o.gBase || 30)) + ch * (open ? LANE_PITCH_OPEN : LANE_PITCH) +
+      f * (open ? FAN_PITCH_OPEN : FAN_PITCH);
+    // collectLinks の通路割当ぶんだけ外側へ出る。折り返しで同じ x に戻さない
+    // （measeEdges が同じピッチで通路幅を確保している）
+    var clampW = Math.max(box.width, o.clampW || 0);
+    var clampX = function (x) { return Math.max(10, Math.min(clampW - 10, x)); };
     var left = o.side === "left", up = !!o.up;
 
     // ゲートウェイ同士の前方分岐: 下頂点から上頂点への短い垂直下降。

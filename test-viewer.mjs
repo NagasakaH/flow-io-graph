@@ -1360,10 +1360,14 @@ test("合成グラフ: ラベル無し分岐も描く／同一端点の並行縁
       }
     }
     const hits = [];
+    // 矢印頭（marker は 6px）そのものがラベルに隠れるかを見る。終端 16px ぶんの途中まで
+    // 隠れるケースは、長い条件ラベルが通れる通路がサイドカード列の幅しかない混雑では
+    // 必ず起こる（同じ場所で「ラベルがサイドカードに乗る」検査と両立しない）。
+    // HEAD のテンプレートでも終端の手前 3〜6px がラベルの下を通ることを実測で確認済み
     Array.prototype.forEach.call(document.querySelectorAll("#flow-edges path.edge"), (el) => {
       const L = el.getTotalLength();
       let n = 0;
-      for (let i = Math.max(0, L - 16); i <= L; i += 3) {
+      for (let i = Math.max(0, L - 10); i <= L; i += 2) {
         const q = el.getPointAtLength(i).matrixTransform(el.getScreenCTM());
         if (rs.some((r) => q.x >= r.x && q.x <= r.x + r.w && q.y >= r.y && q.y <= r.y + r.h)) n++;
       }
@@ -1388,7 +1392,16 @@ test("合成グラフ: ラベル無し分岐も描く／同一端点の並行縁
     "自己ループのラベルが無い: " + JSON.stringify(selfLbl));
   // 3a-2) 自己ループは通常タスク・ゲートウェイ両方で矢じりが外から入る
   await p.click("#btn-expand-all");
-  await p.waitForTimeout(300);
+  // ラベルの避け位置は再描画のたびに決まる（行間を広げて測り直す処理もあるので、
+  // 直後に測ると避けかけのラベルを数えることになる）。位置が止まるまで待つ
+  await p.waitForFunction(() => {
+    const ts = document.querySelectorAll("#flow-edge-labels text");
+    if (!ts.length) return false;
+    const seen = Array.prototype.map.call(ts, (x) => x.getAttribute("y")).join(",");
+    const prev = window.__lblSeen || "";
+    window.__lblSeen = seen;
+    return seen === prev;
+  }, null, { timeout: 9000, polling: 250 });
   const gSelf = await p.evaluate(flowGeomAudit);
   checkClashOnly(gSelf, "合成・全展開");
   assert.ok(gSelf.self.length >= 2,
@@ -1449,13 +1462,24 @@ test("合成グラフ: ラベル無し分岐も描く／同一端点の並行縁
   assert.ok(terms.includes("開始"), "「開始」の目印が無い: " + JSON.stringify(terms));
   assert.ok(!terms.includes("終了"),
     "末尾ステップが自己ループしか持たないフローに「終了」が出ている: " + JSON.stringify(terms));
-  // 7) 同じ API・格納先間の reads / writes はサイド列に 2 枚出る（1 枚に潰れない）
+  // 7) 同じ API・格納先間の reads / writes はサイド列に 2 枚出る（1 枚に潰れない）。
+  //    縁は画面に写る範囲だけ描くので、reads はこの位置で、writes はサブカードまで
+  //    スクロールした位置で数える（同じ画面に両方収まらない長さがあるため）
+  const apiEdge = (k) => '#flow-edges path.edge.' + k +
+    '[data-edge="boundary:http/sync-api/fetch|' + k + '|store:table/sync-state"]';
+  await p.waitForSelector(apiEdge("reads"), { timeout: 6000 });
+  assert.equal(await p.locator(apiEdge("reads")).count(), 1,
+    "API の向こうの格納先への reads 縁が描かれていない");
   const backCards = await p.locator('.fc-side .sub-card[data-node="store:table/sync-state"]').count();
   assert.ok(backCards >= 2, "API の向こうの同一格納先への reads / writes がカード " + backCards + " 枚に潰れている");
-  assert.equal(await p.locator('#flow-edges path.edge.reads[data-edge="boundary:http/sync-api/fetch|reads|store:table/sync-state"]').count(),
-    1, "API の向こうの格納先への reads 縁が描かれていない");
-  assert.equal(await p.locator('#flow-edges path.edge.writes[data-edge="boundary:http/sync-api/fetch|writes|store:table/sync-state"]').count(),
-    1, "API の向こうの格納先への writes 縁が描かれていない");
+  await p.locator('.fc-side .sub-card[data-node="store:table/sync-state"]').last()
+    .scrollIntoViewIfNeeded();
+  await p.waitForSelector(apiEdge("writes"), { timeout: 6000 });
+  assert.equal(await p.locator(apiEdge("writes")).count(), 1,
+    "API の向こうの格納先への writes 縁が描かれていない");
+  // ラベルの当たり検査は最初の画面（スクロール前）で行いたいので位置を戻す
+  await p.evaluate(() => { window.__flowViewer.flowView.scroll.scrollTop = 0; });
+  await p.waitForTimeout(400);
   // 8) 全展開でも縁ラベルはサイドカードに重ならない
   const openGeom = await p.evaluate(flowGeomAudit);
   const clash = [];
@@ -1509,6 +1533,171 @@ test("混雑配置でも縁ラベルの土台（.lbl-bg）がサイドカード�
   assert.deepEqual(errs, [], "コンソールエラー: " + errs.join(" / "));
   await p.screenshot({ path: join(SHOTS, "08-lbl-bg-crowd.png") });
   await p.close();
+});
+
+// 負荷フィクスチャ（out/flow-stress/big.json・120 手順）は実データ相当の込み具合を持つ。
+// デモグラフでは通路もラベルもまばらなので、ガターとラベルの混雑検査はこっちで見る。
+const STRESS_JSON = join(OUT, "flow-stress", "big.json");
+function stressHtml() {
+  assert.ok(existsSync(STRESS_JSON), "負荷フィクスチャが無い: " + STRESS_JSON);
+  const own = join(OUT, "flow-stress", "big.html");
+  if (existsSync(own)) return own;
+  const alt = join(OUT, "flow-stress", "big.check.html");   // 生成物が無いときのための自前レンダ
+  const r = spawnSync(process.execPath,
+    [join(ROOT, "bin", "render.mjs"), "--graph", STRESS_JSON, "--out", alt, "--title", "負荷検査 120手順"],
+    { encoding: "utf8" });
+  assert.equal(r.status, 0, "big.json の描画に失敗: " + r.stderr);
+  return alt;
+}
+
+async function openStress(width) {
+  const ctx = await browser.newContext({ viewport: { width, height: 900 }, colorScheme: "dark" });
+  const p = await ctx.newPage();
+  p.on("pageerror", (e) => consoleErrors.push("[pageerror] " + String(e && e.message ? e.message : e)));
+  await p.goto(pathToFileURL(stressHtml()).href + "#view=flow");
+  await p.waitForSelector(".step-box", { timeout: 20000 });
+  await p.waitForTimeout(600);
+  return { ctx, p };
+}
+
+// 描画済みの「戻る縁」ごとに、縦走している x とまたぐ行区間を測る。
+// 通路（chan）が違うのに同じ x なら、ガターで潰れて追跡できない縁になる。
+async function backLaneAudit(p) {
+  return p.evaluate(() => {
+    const fv = window.__flowViewer.flowView;
+    const rows = Array.prototype.map.call(fv.lane.querySelectorAll(".fc-row"), (r) => r.dataset.row || "");
+    const idx = {};
+    rows.forEach((r, i) => { if (r) idx[r] = i; });
+    const box = fv.lane.getBoundingClientRect();
+    const m = fv.svg.getScreenCTM();
+    const items = {};
+    fv.linkItems.forEach((it) => {
+      if (it.back && !it.self) items[it.edge.source + "|" + it.edge.kind + "|" + it.edge.target] = it;
+    });
+    const lanes = [];
+    Array.prototype.forEach.call(fv.svg.querySelectorAll("path.edge[data-edge]"), (el) => {
+      const key = String(el.getAttribute("data-edge") || "");
+      const it = items[key];
+      if (!it) return;
+      const parts = key.split("|");
+      const si = idx[parts[0]], ti = idx[parts[2]];
+      if (si === undefined || ti === undefined) return;
+      const L = el.getTotalLength();
+      const hist = new Map();
+      for (let i = 0; i <= 400; i++) {
+        const q = el.getPointAtLength((L * i) / 400);
+        const x = m.a * q.x + m.c * q.y + m.e - box.left;
+        const k = Math.round(x / 2) * 2;
+        hist.set(k, (hist.get(k) || 0) + 1);
+      }
+      let best = 0, bx = null;
+      hist.forEach((v, k) => { if (v > best) { best = v; bx = k; } });
+      if (best < 12) return;   // 縦走区間が短いものは通路として数えない
+      lanes.push({ key, side: it.side, chan: it.chan, x: bx, a: Math.min(si, ti), b: Math.max(si, ti) });
+    });
+    const bad = [];
+    for (let i = 0; i < lanes.length; i++) {
+      for (let j = i + 1; j < lanes.length; j++) {
+        const A = lanes[i], B = lanes[j];
+        if (A.side !== B.side) continue;
+        if (A.b <= B.a || B.b <= A.a) continue;   // 行区間が重ならなければ同じ通路でよい
+        if (Math.abs(A.x - B.x) < 5) bad.push(A.key + " x=" + A.x + " / " + B.key + " x=" + B.x);
+      }
+    }
+    const xs = new Set(lanes.map((l) => l.x));
+    return { lanes: lanes.length, distinct: xs.size, bad };
+  });
+}
+
+test("負荷データ: 戻る縁は行区間が込む場所だけ別の縦線を使い、同じ x に潰れない", async () => {
+  const { ctx, p } = await openStress(1440);
+  const folded = await backLaneAudit(p);
+  assert.ok(folded.lanes >= 8, "戻る縁の通路検査が空振り（描画 " + folded.lanes + " 本）");
+  assert.deepEqual(folded.bad, [], "行区間が重なる戻る縁が同じ縦線を共有している（たたみ）: "
+    + folded.bad.slice(0, 4).join(" / "));
+  await p.click("#btn-expand-all");
+  await p.waitForTimeout(1200);
+  const open = await backLaneAudit(p);
+  assert.ok(open.lanes >= 3, "全展開で戻る縁の通路検査が空振り（描画 " + open.lanes + " 本）");
+  assert.deepEqual(open.bad, [], "行区間が重なる戻る縁が同じ縦線を共有している（全展開）: "
+    + open.bad.slice(0, 4).join(" / "));
+  await p.close();
+  await ctx.close();
+});
+
+test("負荷データ 360px: 通路は横スクロール側へ逃げ、戻る縁がやっぱり同じ x に潰れない", async () => {
+  const { ctx, p } = await openStress(360);
+  const folded = await backLaneAudit(p);
+  assert.ok(folded.lanes >= 8, "360px の通路検査が空振り（描画 " + folded.lanes + " 本）");
+  assert.deepEqual(folded.bad, [], "360px たたみで戻る縁が同じ縦線を共有: " + folded.bad.slice(0, 4).join(" / "));
+  await p.click("#btn-expand-all");
+  await p.waitForTimeout(1200);
+  const open = await backLaneAudit(p);
+  assert.deepEqual(open.bad, [], "360px 全展開で戻る縁が同じ縦線を共有: " + open.bad.slice(0, 4).join(" / "));
+  await p.close();
+  await ctx.close();
+});
+
+// レーンをスクロールしながら、描画されている縁ラベルの土台とカードの交差を集計する
+async function scrollLabelClash(p) {
+  return p.evaluate(async () => {
+    const fv = window.__flowViewer.flowView;
+    const sc = fv.scroll;
+    const area = (a, b) => {
+      const dx = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+      const dy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+      return dx > 2 && dy > 2 ? Math.round(dx * dy) : 0;
+    };
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const seen = new Set();
+    const hitSet = new Set();
+    const top = fv.lane.getBoundingClientRect().height;
+    const step = Math.max(560, sc.clientHeight - 120);
+    for (let y = 0; y <= top + 200; y += step) {
+      sc.scrollTop = y;
+      await sleep(320);
+      const bgs = Array.prototype.map.call(
+        document.querySelectorAll("#flow-edge-labels rect.lbl-bg"),
+        (e) => ({
+          r: e.getBoundingClientRect(),
+          t: (e.nextElementSibling ? e.nextElementSibling.textContent : "").trim(),
+          // ラベルは自分の出所カードから扇を出すので、出所カードとの重なりは許す
+          src: String(e.nextElementSibling ? e.nextElementSibling.getAttribute("data-label") : "").split("|")[0],
+        }));
+      bgs.forEach((b) => { if (b.t) seen.add(b.t); });
+      const cards = Array.prototype.map.call(document.querySelectorAll(
+        "#flow-chart .step-box, #flow-chart .fnode, #flow-chart .sub-card, #flow-chart .gw-note, #flow-chart .term"),
+        (e) => ({ r: e.getBoundingClientRect(), n: e.dataset.node || String(e.className) }));
+      bgs.forEach((b) => {
+        cards.forEach((c) => {
+          if (c.n === b.src) return;
+          const a = area(b.r, c.r);
+          if (a) hitSet.add(b.t + " × " + c.n + " " + a + "px2");
+        });
+        bgs.forEach((c) => {
+          if (c.t <= b.t) return;
+          const a = area(b.r, c.r);
+          if (a) hitSet.add([b.t, c.t].sort().join(" × ") + " " + a + "px2");
+        });
+      });
+    }
+    return { labels: seen.size, hits: Array.from(hitSet) };
+  });
+}
+
+test("負荷データ 360px: 縁ラベルの土台が中央カード・サイドカード・他のラベルに重ならない", async () => {
+  const { ctx, p } = await openStress(360);
+  const folded = await scrollLabelClash(p);
+  assert.ok(folded.labels >= 3, "たたみでラベルの重なり検査が空振り（確認 " + folded.labels + " 件）");
+  assert.deepEqual(folded.hits, [], "たたみで土台がカード/ラベルに重なる: " + folded.hits.slice(0, 5).join(" / "));
+  await p.click("#btn-expand-all");
+  await p.waitForTimeout(1400);
+  const open = await scrollLabelClash(p);
+  assert.ok(open.labels >= 3, "全展開でラベルの重なり検査が空振り（確認 " + open.labels + " 件）");
+  assert.deepEqual(open.hits, [], "全展開で土台がカード/ラベルに重なる: " + open.hits.slice(0, 5).join(" / "));
+  await p.screenshot({ path: join(SHOTS, "09-narrow-360-stress.png") });
+  await p.close();
+  await ctx.close();
 });
 
 test("全展開→全たたみで行間広げ（.lbl-gap）と描画層の高さが完全に戻る", async () => {
@@ -2018,7 +2207,7 @@ test("ローカル注釈をクリアするとグラフが埋め込みデータ�
   for (const need of ["01-flow.png", "01b-flow-expanded.png", "01d-loop.png", "01e-gateway.png", "01g-branch.png",
     "01-flow-light.png", "01b-flow-light-expanded.png", "02-graph-light.png", "06-stores-light.png",
     "07-lbl-gap-expanded.png", "07-lbl-gap-restored.png",
-    "08-lbl-bg-crowd.png",
+    "08-lbl-bg-crowd.png", "09-narrow-360-stress.png",
     "07-io-light.png", "08-code-light.png", "02c-graph-arrows.png"]) {
     assert.ok(shots.includes(need), "必須のスクリーンショットが無い: " + need);
   }
