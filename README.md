@@ -38,7 +38,25 @@ node --test          # 全テスト
 ## 運用サイクル
 
 1. **人がフローを定義する** — `flows/*.json` にステップと入出力を書く（JSON、コメント可）。
-   完璧でなくてよい。ステップ名だけ並べておくのでも十分
+   完璧でなくてよい。ステップ名だけ並べておくのでも十分。分岐は gateway、ループは `to` が
+   前を向くだけで書ける:
+
+   ```jsonc
+   { "id": "gate-result", "name": "決済結果", "kind": "gateway",
+     "branches": [
+       { "to": "charge", "label": "成功" },
+       { "to": "retry-gate", "label": "失敗" }
+     ] },
+   // ...
+   { "id": "retry-gate", "name": "再試行判定", "kind": "gateway",
+     "branches": [
+       { "to": "receive", "label": "3回目まで再実行" }, // 前方向の to = ループ
+       { "to": "notify", "label": "打ち切り" }
+     ] }
+   ```
+
+   `branches` を書いたステップからは暗黙の「次へ」が立たない（分岐はすべて明示）。
+   書かなければ従来の線形定義はそのままで動く
 2. **スキャンが実線を拾う** — 多言語（py / js / ts / go / java / cs / rb / php / sql / sh / tf）から
    SQL のテーブル名、S3・SQS・Kafka・Redis・HTTP URL・Lambda・Step Functions の**リテラル**を拾う。
    変数や補間で決まらないものは無理に推測せず「要原文確認」として残す

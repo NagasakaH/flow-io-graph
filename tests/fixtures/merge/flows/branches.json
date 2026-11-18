@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "flows": [
+    {
+      "id": "branch",
+      "name": "分岐テスト",
+      "steps": [
+        { "id": "start", "name": "開始" },
+        {
+          "id": "gate",
+          "name": "判定（gateway 宣言忘れ）",
+          "branches": [
+            { "to": "late", "label": "後方参照" },
+            { "to": "orphan", "label": "孤立側" }
+          ]
+        },
+        {
+          "id": "loopgate",
+          "name": "リトライ判定（直前が gateway なので到達不能）",
+          "kind": "gateway",
+          "branches": [
+            { "to": "start", "label": "やり直し" },
+            { "to": "late" }
+          ]
+        },
+        { "id": "late", "name": "後方参照先" },
+        { "id": "orphan", "name": "孤立先" }
+      ]
+    }
+  ]
+}

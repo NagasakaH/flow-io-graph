@@ -198,7 +198,8 @@ if (opt.flows) {
         description: flow.description,
         provenance: "definition",
       });
-      let prev = null;
+      // 1 周目: ノードと入出力（branches の to が前方参照でも良いように、縁は 2 周目にまとめて張る）
+      const seq = []; // { stepId, step, order }
       let order = 0;
       for (const step of flow.steps ?? []) {
         if (!step.id) {
@@ -208,15 +209,22 @@ if (opt.flows) {
         order += 1;
         const stepId = `step:${flow.id}/${step.id}`;
         if (nodes.has(stepId)) warn(`${file}: step ${stepId} が重複しています（縁は追記）`);
+        const hasBranches = Array.isArray(step.branches) && step.branches.length > 0;
+        let gateway = step.kind === "gateway";
+        if (hasBranches && !gateway) {
+          warn(`${file}: ${stepId} に branches があるため kind: "gateway" として扱いました（宣言を推奨）`);
+          gateway = true;
+        }
+        if (gateway && !hasBranches) warn(`${file}: gateway ${stepId} に branches が無く、ただの通過点です`);
+        if (gateway && hasBranches && step.branches.length < 2) warn(`${file}: gateway ${stepId} の branches が 1 本しかありません（分岐の意味を再考してください）`);
         const node = addNode(stepId, "step", step.name ?? step.id, {
           docs: step.docs,
           description: step.description,
+          ...(gateway ? { stepKind: "gateway" } : {}),
           provenance: "definition",
         });
         node.parent = flowId;
         addEdge(flowId, stepId, "contains", { provenance: "definition", confidence: 1, metadata: { order } });
-        if (prev) addEdge(prev, stepId, "next", { provenance: "definition", confidence: 1, metadata: { order } });
-        prev = stepId;
         for (const [field, kind, side] of [
           ["reads", "reads", "store"],
           ["writes", "writes", "store"],
@@ -236,6 +244,44 @@ if (opt.flows) {
             addEdge(stepId, parsed.id, kind, { provenance: "definition", confidence: 1 });
           }
         }
+        seq.push({ stepId, step, order });
+      }
+      // 2 周目: next 縁（branches があれば全て明示、無ければ前ステップから暗黙の直列）
+      const reached = new Set();
+      const orderOf = new Map(seq.map((s) => [s.stepId, s.order]));
+      let prev = null;
+      for (const { stepId, step, order: ord } of seq) {
+        const hasBranches = Array.isArray(step.branches) && step.branches.length > 0;
+        // 前が線形ステップなら、次が gateway でも通常タスクでも暗黙の次へを張る
+        // （抑止するのは branches を持つステップの「出口」だけ）
+        if (prev) {
+          addEdge(prev, stepId, "next", { provenance: "definition", confidence: 1, metadata: { order: ord } });
+          reached.add(stepId);
+        }
+        if (hasBranches) {
+          for (const b of step.branches) {
+            const targetId = `step:${flow.id}/${b.to}`;
+            const loop = orderOf.has(targetId) && orderOf.get(targetId) < ord;
+            const kept = addEdge(stepId, targetId, "next", {
+              provenance: "definition",
+              confidence: 1,
+              metadata: { order: orderOf.get(targetId) ?? ord, ...(b.label ? { label: b.label } : {}), ...(loop ? { loop: true } : {}) },
+            });
+            if (loop && kept) process.stdout.write(`ループ検出: ${stepId} → ${targetId}${b.label ? ` (${b.label})` : ""}\n`);
+            reached.add(targetId);
+          }
+          prev = null; // 分岐ステップからの暗黙の次へは張らない
+          continue;
+        }
+        prev = stepId;
+      }
+      // 到達不能チェック: 先頭以外にどの next でも届かないステップは定義の穴
+      for (const { stepId } of seq.slice(1)) {
+        const hasIncoming = graphHasNext(flowId, stepId) || reached.has(stepId);
+        if (!hasIncoming) warn(`${file}: ${stepId} にどのステップからも到達しません（branches の to か並び順を確認してください）`);
+      }
+      function graphHasNext(_flowId, targetId) {
+        return [...edges.values()].some((e) => e.kind === "next" && e.target === targetId);
       }
     }
   }

@@ -36,6 +36,7 @@ worklist.mjs ←─ graph.json（LLM が注釈を書くためのワークシー�
 
 - `provenance`: `"static"`（スキャン）/ `"definition"`（フロー定義）/ `"llm"` / `"human"`
   （注釈由来のノードのみ）。無ければ `definition`
+- `stepKind`（`step` のみ）: `"gateway"` のとき分岐ノード（ビューアでひし形）。通常タスクは無し
 - `candidate: true` — スキャンが候補として出しただけのノード（まだステップに紐づいていない）。
   ビューアで「未紐づけ」フィルタの材料
 - `evidence`: `[{ "path", "line", "snippet", "signal" }]` — スキャンが拾った根拠
@@ -59,7 +60,7 @@ worklist.mjs ←─ graph.json（LLM が注釈を書くためのワークシー�
 | kind | source → target | 意味 |
 | --- | --- | --- |
 | `contains` | flow → step | 階層（`parent` とあわせて持つ） |
-| `next` | step → step | 同一フロー内の順序（`metadata.order` に連番） |
+| `next` | step → step | フロー内の進行（`metadata.order` に連番、分岐は `metadata.label` に条件ラベル。`to` が前方向ならループ） |
 | `reads` | step / boundary → store | 入力に読む |
 | `writes` | step / boundary → store | 出力に書く |
 | `invokes` | step → boundary | API 実行などの境界を呼ぶ |
@@ -104,6 +105,24 @@ JSON にコメントを許す（JSONC）。`--flows` に渡したディレクト
           "writes":  ["table/orders"],
           "invokes": ["http/payment-service/charge"],
           "docs": "Notion の URL など"
+        },
+        {
+          "id": "result",
+          "name": "決済結果",
+          "kind": "gateway",           // 分岐ノード（ビューアでひし形）
+          "branches": [                // 条件付きの next。to は同一 flow の step id
+            { "to": "charge", "label": "成功" },
+            { "to": "retry",  "label": "失敗" }
+          ]
+        },
+        {
+          "id": "retry",
+          "name": "再試行判定",
+          "kind": "gateway",
+          "branches": [
+            { "to": "receive", "label": "3回目まで再実行" }, // 前方向の to = ループ
+            { "to": "notify",  "label": "打ち切り" }
+          ]
         }
       ]
     }
@@ -111,9 +130,16 @@ JSON にコメントを許す（JSONC）。`--flows` に渡したディレクト
 }
 ```
 
-- `steps` の配列順が `next` エッジの順序になる
 - 参照文字列の種別プレフィックスは `store` 側が `table` `file` `s3` `queue` `topic` `kv` `other`、
   `invokes` だけが `boundary` 側（`http` `lambda` `sfn` `grpc` `cli` `other`）
+- `steps` の配列順が `next` エッジの順序になる。ただし **`branches` を持つステップからは
+  暗黙の「次へ」縁を張らない**（分岐はすべて明示縁になる）
+- **分岐・ループ**: `branches[].to` は同一 flow 内の step id を指す。前方向（配列で前の
+  ステップ）を指せばそれがループで、追加の構文は無い。`label` はビューアの縁ラベルに使う
+  （「在庫あり」などの条件を人間が読むために書く）
+- `branches` を書いたのに `kind: "gateway"` を忘れた場合は gateway に昇格させて警告を出す。
+  gateway に branches が 2 未満、`to` が同一フローに存在しない、他のステップから一度も
+  到達できない場合も警告する（グラフにしないよりマシなので張るが、穴は残さない）
 - 同じステップに `reads` と `writes` で同じ参照を書くと双向の縁になる（自己ループにはしない）
 
 ## scan.json（scan.mjs の出力）

@@ -42,7 +42,12 @@ for (const e of graph.edges) {
 
 const steps = graph.nodes.filter((n) => n.kind === "step");
 const ioKinds = new Set(["reads", "writes", "invokes"]);
-const noIo = steps.filter((s) => !(outEdges.get(s.id) ?? []).some((e) => ioKinds.has(e.kind)));
+// gateway は制御の分岐点で I/O を持たないのが正常なので、未記入扱いしない
+const noIo = steps.filter(
+  (s) =>
+    s.metadata?.stepKind !== "gateway" &&
+    !(outEdges.get(s.id) ?? []).some((e) => ioKinds.has(e.kind)),
+);
 const noImpl = steps.filter((s) => !(outEdges.get(s.id) ?? []).some((e) => e.kind === "implemented-by"));
 const candidates = graph.nodes
   .filter((n) => n.metadata?.candidate && ["store", "boundary"].includes(n.kind))

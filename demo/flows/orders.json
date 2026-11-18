@@ -17,6 +17,26 @@
           "docs": "runbook: 注文受付 (Notion)"
         },
         {
+          "id": "gate-result",
+          "name": "決済結果",
+          "kind": "gateway",
+          "description": "charge API のレスポンスで分岐",
+          "branches": [
+            { "to": "charge", "label": "成功" },
+            { "to": "retry-gate", "label": "失敗" }
+          ]
+        },
+        {
+          "id": "retry-gate",
+          "name": "再試行判定",
+          "kind": "gateway",
+          "description": "3 回目までは受注からやり直し、超えたら打ち切り",
+          "branches": [
+            { "to": "receive", "label": "3回目まで再実行" },
+            { "to": "notify", "label": "打ち切り（失敗通知）" }
+          ]
+        },
+        {
           "id": "charge",
           "name": "決済確定",
           "description": "決済済みレコード（境界の向こうで payments に書かれる）を読んでイベント化する",

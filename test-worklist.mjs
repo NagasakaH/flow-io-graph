@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -11,12 +11,16 @@ const FIX = join(ROOT, "tests", "fixtures", "merge");
 
 function buildWorklist() {
   const dir = mkdtempSync(join(tmpdir(), "flowworklist-"));
+  // branches.json の分岐ステップを巻き込まないよう、ship フローだけ使って測る
+  const flows = join(dir, "flows");
+  mkdirSync(flows, { recursive: true });
+  cpSync(join(FIX, "flows", "ship.json"), join(flows, "ship.json"));
   const graph = join(dir, "graph.json");
   let r = spawnSync(
     process.execPath,
     [
       join(ROOT, "bin", "merge.mjs"),
-      "--flows", join(FIX, "flows"),
+      "--flows", flows,
       "--scan", join(FIX, "scan.json"),
       "--annotation", join(FIX, "annotations", "llm.json"),
       "--out", graph,
