@@ -33,6 +33,8 @@
   --e-reads: #2dd4bf;
   --e-writes: #f0883e;
   --e-invokes: #bc8cff;
+  --e-next: #3fb950;
+  --e-loop: #ff7b72;
   --mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 [data-kind="flow"] { --kc: var(--k-flow); }
@@ -223,30 +225,45 @@ table.grid tbody tr.sel { background: #17293f; }
 .cell-names .n:hover { color: var(--accent); }
 .io-tags { display: flex; gap: 4px; flex-wrap: wrap; }
 
-/* ---------- フロー図 ---------- */
+/* ---------- フロー図（フローチャート） ---------- */
 .flow-scroll { height: 100%; overflow: auto; }
-.flow-cols {
-  position: relative;
-  display: grid;
-  grid-template-columns: minmax(200px, 250px) minmax(300px, 1fr) minmax(220px, 300px);
-  gap: 46px;
-  padding: 4px 6px 18px;
-  align-items: start;
+.flow-bar {
+  position: sticky; top: 0; z-index: 4; display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+  font-size: 11px; color: var(--muted); padding: 7px 6px 9px;
+  background: linear-gradient(180deg, var(--bg) 68%, rgba(11,16,23,.86) 88%, rgba(11,16,23,0));
+  border-bottom: 1px solid var(--line-soft);
 }
+.flow-bar .hintline { color: var(--dim); }
+.flow-bar b { font-size: 12.5px; }
+.fc-lane { position: relative; display: flex; flex-direction: column; padding: 6px 8px 22px; }
 #flow-edges { position: absolute; inset: 0; pointer-events: none; z-index: 0; overflow: visible; }
 #flow-edges path.edge { fill: none; stroke-width: 1.6; opacity: .8; }
-#flow-edges path.edge.hl { opacity: 1; stroke-width: 2.4; }
+#flow-edges path.edge.hl { opacity: 1; stroke-width: 2.6; }
+#flow-edges path.edge.dimmed { opacity: .16; }
 #flow-edges path.reads { stroke: var(--e-reads); }
 #flow-edges path.writes { stroke: var(--e-writes); }
 #flow-edges path.invokes { stroke: var(--e-invokes); }
 #flow-edges path.dash { stroke-dasharray: 5 4; }
-.col { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-.col-head {
-  height: 30px; display: flex; align-items: center; gap: 6px;
-  font-size: 11.5px; color: var(--muted); border-bottom: 1px solid var(--line);
-  margin-bottom: 2px; font-weight: 650;
+#flow-edges path.next { stroke: var(--e-next); }
+#flow-edges path.loop { stroke: var(--e-loop); stroke-width: 2.4; opacity: .95; }
+/* 分岐・ループのラベルはカードより上に出す（縁そのものはカードの裏を回る） */
+#flow-edge-labels { position: absolute; inset: 0; pointer-events: none; z-index: 3; overflow: visible; }
+#flow-edge-labels text {
+  font-size: 10.5px; font-weight: 650; dominant-baseline: middle;
+  paint-order: stroke; stroke: #0b1016; stroke-width: 4px; stroke-linejoin: round;
 }
-.col-head .n { color: var(--dim); font-weight: 400; }
+#flow-edge-labels text.next { fill: var(--e-next); text-anchor: start; }
+#flow-edge-labels text.loop { fill: var(--e-loop); text-anchor: end; }
+#flow-edge-labels text.hl { font-size: 11.5px; }
+#flow-edge-labels text.dimmed { opacity: .2; }
+.fc-row { display: flex; align-items: flex-start; gap: 20px; position: relative; z-index: 1; }
+.fc-mid { flex: 0 0 440px; min-width: 0; }
+.fc-side { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; padding-top: 2px; }
+.fc-arrow-row .fc-arrow { flex: 0 0 440px; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--dim); font-size: 11px; padding: 4px 0; position: relative; z-index: 1; }
+.fc-arrow-row .fc-side { visibility: hidden; }
+.fc-arrow .arrow { color: var(--accent); font-size: 15px; line-height: 1; }
+.fc-more { display: flex; justify-content: center; gap: 8px; align-items: center; margin-top: 10px; position: relative; z-index: 1; }
+.side-head { font-size: 10.5px; color: var(--dim); letter-spacing: .04em; }
 .fnode {
   position: relative; z-index: 1;
   border: 1px solid var(--line); border-left: 3px solid var(--kc, var(--line));
@@ -261,9 +278,50 @@ table.grid tbody tr.sel { background: #17293f; }
 .fnode .id { color: var(--dim); font-family: var(--mono); font-size: 10px; word-break: break-all; margin-top: 2px; }
 .fnode .meta { color: var(--muted); font-size: 11px; margin-top: 3px; display: flex; gap: 6px; flex-wrap: wrap; }
 .fnode .pvs { margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap; }
-.step-wrap { position: relative; z-index: 1; display: flex; flex-direction: column; }
-.step-sep { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 11px; padding: 2px 0 2px 12px; }
-.step-sep .arrow { color: var(--accent); font-size: 13px; }
+/* ステップボックス（フローチャートのノード） */
+.step-box { padding-right: 26px; }
+.step-box .mk { color: var(--dim); font-size: 10px; width: 9px; flex: none; }
+.step-box.expanded { border-color: var(--accent); background: #16202c; }
+.step-box.expanded .mk { color: var(--accent); }
+.step-box .num { color: var(--dim); font-weight: 500; font-family: var(--mono); flex: none; }
+.step-box .info {
+  position: absolute; right: 5px; top: 5px; width: 18px; height: 18px; line-height: 16px; padding: 0;
+  border: 1px solid var(--line); border-radius: 5px; background: #0f151d; color: var(--muted);
+  font-size: 11px; cursor: pointer;
+}
+.step-box .info:hover { color: var(--fg); border-color: var(--accent); }
+.step-box.hl { outline: 2px solid #d29922; outline-offset: 1px; }
+/* 分岐ノード（gateway）はひし形。疑似要素を clip-path で切り、2px 差分を縁に見せる */
+.step-box.gw {
+  width: 78%; margin: 3px auto; padding: 15px 44px; text-align: center;
+  background: transparent; border: none; border-radius: 0;
+}
+.step-box.gw::before, .step-box.gw::after {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+}
+.step-box.gw::before { background: var(--k-boundary); }
+.step-box.gw::after { inset: 2px; background: #151d29; }
+.step-box.gw:hover::before, .step-box.gw.expanded::before { background: var(--accent); }
+.step-box.gw.hl::before { background: #d29922; }
+.step-box.gw.expanded::after { background: #1a2534; }
+/* ひし形に四角い outline は似合わないので、選択・強調は疑似要素側の色で出す */
+.step-box.gw.selected, .step-box.gw.hl { outline: none; }
+.step-box.gw.selected::before { background: var(--accent); filter: drop-shadow(0 0 5px rgba(88, 166, 255, .55)); }
+/* 展開時は id と説明が入るので、ひし形の usable 領域を広げる */
+.step-box.gw.expanded { width: 100%; padding: 30px 74px; }
+.step-box.gw .t, .step-box.gw .pvs { justify-content: center; }
+.step-box.gw .id, .step-box.gw .meta { text-align: center; }
+.step-box.gw .info { right: 32px; top: 50%; transform: translateY(-50%); }
+.gwmark { color: var(--k-boundary); flex: none; font-size: 11px; }
+.b-io.g { color: var(--e-next); }
+.badge.loop { background: #3a1d1d; color: #ff8f85; border-color: #7d3a35; }
+.sub-card.branch .bl { color: var(--e-next); font-weight: 650; }
+.sub-card.branch.loop .bl { color: var(--e-loop); }
+.b-io { background: #1b2431; color: var(--muted); border: 1px solid var(--line); }
+.b-io.r { color: var(--e-reads); } .b-io.w { color: var(--e-writes); } .b-io.i { color: var(--e-invokes); }
+.xcount { display: none; }
+.xcount.on { display: inline-flex; background: #3a2b12; color: #e3b341; border: 1px solid #7a5514; }
 .sub-wrap { margin: 4px 0 0 14px; display: flex; flex-direction: column; gap: 5px; position: relative; z-index: 1; }
 .sub-card {
   border: 1px dashed var(--line); background: #141b23; border-radius: 6px; padding: 4px 7px;
@@ -274,6 +332,12 @@ table.grid tbody tr.sel { background: #17293f; }
 .sub-card .lbl { color: var(--dim); font-size: 10px; }
 .cand-band { margin: 16px 6px 0; border-top: 1px dashed var(--line); padding-top: 12px; position: relative; z-index: 1; }
 .cand-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 8px; margin-top: 6px; }
+.col-head {
+  height: 30px; display: flex; align-items: center; gap: 6px;
+  font-size: 11.5px; color: var(--muted); border-bottom: 1px solid var(--line);
+  margin-bottom: 2px; font-weight: 650;
+}
+.col-head .n { color: var(--dim); font-weight: 400; }
 
 /* ---------- グラフ（canvas） ---------- */
 .canvas-host { position: absolute; inset: 0; }
@@ -412,6 +476,7 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
   // 大量データで初期表示が固まらないための打ち切り（超分は「さらに表示」で出す）
   var TABLE_CAP = 400;
   var FLOW_COL_CAP = 250;
+  var EDGE_CULL_MIN = 400; // これを超える縁は画面外を描かない
   var CAND_CAP = 200;
   var SEARCH_CAP = 50;
 
@@ -496,6 +561,7 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
     flowId: null,
     selected: null,
     detailEdge: null,
+    expanded: new Set(), // フロー図で展開中のステップ id（hash に載せる）
     focusId: null, // グラフタブの ⇧ フォーカス
     filters: { kinds: new Set(KINDS), provs: new Set(PROV_KINDS), unlinked: false },
     vis: { nodes: [], edges: [], nodeSet: new Set() },
@@ -741,6 +807,7 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
     p.set("view", state.view);
     if (state.flowId) p.set("flow", state.flowId);
     if (state.selected) p.set("select", state.selected);
+    if (state.view === "flow" && state.expanded.size) p.set("expanded", Array.from(state.expanded).join(","));
     return p.toString();
   }
   function writeHash() {
@@ -759,6 +826,12 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
     var s = p.get("select"); // URLSearchParams が %3A を ":" に戻してくれる
     if (s && state.byId.has(s)) state.selected = s;
     else if (s) toast("hash の select=" + s + " はこのグラフに見つかりません");
+    var ex = p.get("expanded"); // 展開状態も復元（%2C 区切りは URLSearchParams が "," に戻す）
+    if (ex) ex.split(",").forEach(function (id) {
+      if (!id) return;
+      if (state.byId.has(id)) state.expanded.add(id);
+      else toast("hash の expanded=" + id + " はこのグラフに見つかりません");
+    });
   }
 
   function selectNode(id, opts) {
@@ -813,6 +886,7 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
     document.querySelectorAll("tr[data-node]").forEach(function (tr) {
       tr.classList.toggle("sel", tr.dataset.node === state.selected);
     });
+    if (views.flow && views.flow.built && state.view === "flow") flowView.crossHighlight();
   }
 
   function refresh(opts) {
@@ -1014,123 +1088,277 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
   //  タブ 1: フロー図（3 層レイアウト + SVG ベジェ縁）
   // ==========================================================
   var flowView = {
-    root: null, head: null, cols: null, svg: null, scroll: null, band: null,
-    built: false, cardOf: new Map(), edgePairs: [],
+    root: null, bar: null, lane: null, svg: null, scroll: null, band: null, moreWrap: null, more: null,
+    built: false, limit: FLOW_COL_CAP,
+    edgeItems: [], // 展開中のステップ ⇄ サイドカードの縁
+    linkItems: [], // ステップ ⇄ ステップの分岐・ループ縁（展開と無関係に常時）
     ensure: function () {
       if (this.built) return;
       this.root = $("#view-flow");
       this.root.classList.add("no-pad");
       this.scroll = el("div", { class: "flow-scroll", id: "flow-scroll" });
-      this.head = el("div", { class: "legend", id: "flow-legend" });
-      this.cols = el("div", { class: "flow-cols", id: "flow-cols" });
+      this.bar = el("div", { class: "flow-bar", id: "flow-bar" });
+      this.lane = el("div", { class: "fc-lane", id: "flow-chart" });
       this.svg = el("svg", { id: "flow-edges", "aria-hidden": "true" });
+      this.svgLbl = el("svg", { id: "flow-edge-labels", "aria-hidden": "true" });
       this.band = el("div", { class: "cand-band", id: "candidate-band" });
-      this.cols.appendChild(this.svg);
-      this.scroll.appendChild(this.head);
-      this.scroll.appendChild(this.cols);
+      this.more = el("button", { class: "btn small", id: "flow-more" });
+      var self = this;
+      this.more.addEventListener("click", function () { self.limit += FLOW_COL_CAP; self.render(); });
+      this.moreWrap = el("div", { class: "fc-more" }, el("span", { class: "hint", id: "flow-more-note" }), this.more);
+      this.lane.appendChild(this.svg);
+      this.lane.appendChild(this.svgLbl);
+      this.scroll.appendChild(this.bar);
+      this.scroll.appendChild(this.lane);
       this.scroll.appendChild(this.band);
       this.root.appendChild(this.scroll);
-      var self = this;
+      // レーン相対の座標はスクロールで変わらないので、スクロール時は計測せず描き直すだけ
       this.scroll.addEventListener("scroll", function () { self.scheduleEdges(); });
-      window.addEventListener("resize", function () { if (state.view === "flow") self.scheduleEdges(); });
+      window.addEventListener("resize", function () {
+        if (state.view !== "flow") return;
+        self.measureEdges();
+        self.scheduleEdges();
+      });
       this.built = true;
+    },
+    // ---- ツールバー ----
+    renderBar: function (flow, steps) {
+      var self = this;
+      var md = flow.metadata || {};
+      this.bar.appendChild(el("b", {}, flow.name));
+      if (md.owner) this.bar.appendChild(el("span", { class: "dim" }, "owner: " + md.owner));
+      if (md.description) this.bar.appendChild(el("span", { class: "dim" }, md.description));
+      this.bar.appendChild(el("span", { class: "dim" }, "ステップ " + steps.length));
+      this.bar.appendChild(el("button", { class: "btn small", id: "btn-expand-all", title: "このフローの全ステップを展開",
+        onclick: function () { self.expandAll(true); } }, "全展開"));
+      this.bar.appendChild(el("button", { class: "btn small", id: "btn-collapse-all", title: "全部たたむ",
+        onclick: function () { self.expandAll(false); } }, "全たたむ"));
+      this.bar.appendChild(el("span", { class: "hintline", id: "flow-hint" },
+        "ボックスをクリックすると入出力を展開（もう一度でたたむ）／右上の ⓘ で詳細パネル／ストア・境界カードを選ぶと結ばれたステップを強調"));
+      [["reads", "読み取り reads"], ["writes", "書き込み writes"], ["invokes", "呼び出し invokes"]].forEach(function (p) {
+        var i = el("i", { class: p[0] });
+        i.style.borderColor = "var(--e-" + p[0] + ")";
+        this.bar.appendChild(el("span", {}, i, p[1]));
+      }, this);
+      [["next", "分岐 next"], ["loop", "ループ"]].forEach(function (p) {
+        var i = el("i", { class: p[0] });
+        i.style.borderColor = "var(--e-" + p[0] + ")";
+        this.bar.appendChild(el("span", {}, i, p[1]));
+      }, this);
+      this.bar.appendChild(el("span", {}, el("i", { class: "dash", style: "border-color:#8b98a9" }), "破線 = LLM / 人間の注釈"));
+      this.hudCull = el("span", { class: "hint", id: "flow-cull-note", style: "display:none" }, "");
+      this.bar.appendChild(this.hudCull);
     },
     render: function () {
       if (!this.root) return;
       var self = this;
-      this.cardOf = new Map();
-      this.edgePairs = [];
-      clear(this.head); clear(this.cols); clear(this.band);
-      this.cols.appendChild(this.svg);
+      this.edgeItems = [];
+      this.linkItems = [];
+      clear(this.bar); clear(this.lane); clear(this.band);
+      this.lane.appendChild(this.svg);
+      this.lane.appendChild(this.svgLbl);
       var flow = state.byId.get(state.flowId);
       if (!flow) {
-        this.cols.appendChild(el("div", { class: "empty-note" }, "フローがありません。flows/*.json を定義して merge してください。"));
+        this.lane.appendChild(el("div", { class: "empty-note" }, "フローがありません。flows/*.json を定義して merge してください。"));
         return;
       }
       var steps = flowSteps(flow);
-      this.head.appendChild(el("b", {}, flow.name));
-      if (flow.metadata && flow.metadata.owner) this.head.appendChild(el("span", {}, "owner: " + flow.metadata.owner));
-      if (flow.metadata && flow.metadata.description) this.head.appendChild(el("span", { class: "dim" }, flow.metadata.description));
-      this.head.appendChild(el("span", { class: "dim" }, "ステップ " + steps.length));
-      [["reads", "読み取り reads"], ["writes", "書き込み writes"], ["invokes", "呼び出し invokes"]].forEach(function (p) {
-        var i = el("i", { class: p[0] });
-        i.style.borderColor = "var(--e-" + p[0] + ")";
-        var span = el("span", {}, i, p[1]);
-        this.head.appendChild(span);
-      }, this);
-      this.head.appendChild(el("span", {}, el("i", { class: "dash", style: "border-color:#8b98a9" }), "破線 = LLM / 人間の注釈"));
-
-      // --- 左右列に置くノードを決める ---
-      var left = [], right = [], bounds = [];
-      var seen = new Set();
-      steps.forEach(function (st) {
-        outsOf(st.id).forEach(function (e) {
-          var t = state.byId.get(e.target);
-          if (!t || !state.vis.nodeSet.has(t.id)) return;
-          if (e.kind === "reads" && t.kind === "store" && !seen.has(t.id)) { seen.add(t.id); left.push(t); }
-          if (e.kind === "invokes" && t.kind === "boundary" && !seen.has(t.id)) { seen.add(t.id); bounds.push(t); }
+      this.renderBar(flow, steps);
+      var placed = new Set();
+      var shown = steps.slice(0, this.limit);
+      var boxes = new Map();
+      shown.forEach(function (st, i) {
+        // ▼ は「配列で隣接 + ラベルの無い next 縁が順方向」の間にだけ置く。
+        // 分岐（label 付き）とループは側面を回る縁で描くので ▼ は冗長になる。
+        if (i > 0 && linearNextEdge(steps[i - 1].id, st.id)) self.lane.appendChild(self.arrowRow());
+        var row = self.stepRow(st.node, i + 1, placed);
+        var bx = row.querySelector(".step-box");
+        if (bx) boxes.set(st.id, bx);
+        self.lane.appendChild(row);
+      });
+      this.collectLinks(boxes);
+      if (steps.length > shown.length) {
+        this.more.textContent = "さらに " + Math.min(FLOW_COL_CAP, steps.length - shown.length) + " 件表示";
+        clear(this.moreWrap).appendChild(el("span", { class: "hint", id: "flow-more-note" },
+          "ほか " + (steps.length - shown.length) + " ステップ"), this.more);
+        this.lane.appendChild(this.moreWrap);
+      }
+      this.renderCandidates(placed);
+      this.measureEdges();
+      this.scheduleEdges();
+      this.crossHighlight();
+    },
+    // ステップ ⇄ ステップの分岐・ループ縁（label 付き next と metadata.loop）は展開と無関係に常時描く
+    collectLinks: function (boxes) {
+      var self = this;
+      var fan = new Map(); // 同じ出所が重なるので横にずらす
+      boxes.forEach(function (fromEl, id) {
+        outsOf(id).forEach(function (e) {
+          if (e.kind !== "next") return;
+          var md = e.metadata || {};
+          if (!md.label && !md.loop) return; // 線形 next は ▼ が担当
+          var toEl = boxes.get(e.target);
+          if (!toEl) return; // フィルタ外・「さらに表示」の先は描かない
+          var k = fan.get(id) || 0;
+          fan.set(id, k + 1);
+          self.linkItems.push({
+            link: true, edge: e, fromEl: fromEl, toEl: toEl,
+            loop: !!md.loop, label: md.label || "", fan: k,
+          });
         });
       });
-      steps.forEach(function (st) {
-        outsOf(st.id).forEach(function (e) {
-          var t = state.byId.get(e.target);
-          if (!t || !state.vis.nodeSet.has(t.id) || e.kind !== "writes" || t.kind !== "store" || seen.has(t.id)) return;
-          seen.add(t.id);
-          right.push(t);
-        });
+    },
+    arrowRow: function () {
+      return el("div", { class: "fc-row fc-arrow-row" },
+        el("div", { class: "fc-side" }),
+        el("div", { class: "fc-arrow", title: "next" }, el("span", { class: "arrow" }, "▼")),
+        el("div", { class: "fc-side" }));
+    },
+    stepRow: function (n, order, placed) {
+      var open = state.expanded.has(n.id);
+      var box = this.stepBox(n, order, open);
+      var left = el("div", { class: "fc-side left", dataset: { side: "left", for: n.id } });
+      var right = el("div", { class: "fc-side right", dataset: { side: "right", for: n.id } });
+      if (open) this.fillSides(n, box, left, right, placed);
+      return el("div", { class: "fc-row" + (open ? " open" : ""), dataset: { row: n.id } },
+        left, el("div", { class: "fc-mid" }, box), right);
+    },
+    // 折りたたみ時のステップボックス（番号・名前・小バッジだけ）
+    stepBox: function (n, order, open) {
+      var self = this;
+      var vis = { reads: 0, writes: 0, invokes: 0 };
+      var branches = 0;
+      outsOf(n.id).forEach(function (e) {
+        if (vis[e.kind] != null) vis[e.kind]++;
+        if (e.kind === "next") branches++;
       });
-      var colNodes = seen;
-
-      // --- 左: 入力ソース ---
-      var colL = el("div", { class: "col", id: "col-input" },
-        el("div", { class: "col-head" }, "入力ソース（reads）", el("span", { class: "n" }, String(Math.min(left.length, FLOW_COL_CAP)))));
-      left.slice(0, FLOW_COL_CAP).forEach(function (n) { colL.appendChild(flowCard(n, { sub: "入力" })); });
-      if (left.length > FLOW_COL_CAP) colL.appendChild(moreNote(left.length - FLOW_COL_CAP));
-
-      // --- 中央: ステップ列 ---
-      var colS = el("div", { class: "col", id: "col-steps" },
-        el("div", { class: "col-head" }, "ステップ列（next 順）", el("span", { class: "n" }, String(steps.length))));
-      steps.slice(0, FLOW_COL_CAP).forEach(function (st, i) {
-        if (i > 0) colS.appendChild(el("div", { class: "step-sep" }, el("span", { class: "arrow" }, "↓"), String(i + 1) + " 番目"));
-        colS.appendChild(flowCard(st.node, { step: true, order: i + 1 }));
+      var tot = stepIoCount(n.id);
+      var md = n.metadata || {};
+      var gw = md.stepKind === "gateway";
+      var badges = [];
+      if (vis.reads) badges.push(el("span", { class: "badge b-io r", dataset: { io: "reads" } }, "読 " + vis.reads));
+      if (vis.writes) badges.push(el("span", { class: "badge b-io w", dataset: { io: "writes" } }, "書 " + vis.writes));
+      if (vis.invokes) badges.push(el("span", { class: "badge b-io i", dataset: { io: "invokes" } }, "呼 " + vis.invokes));
+      if (gw) badges.push(el("span", { class: "badge b-io g", dataset: { branch: "count" } }, "分岐 " + branches));
+      if (tot === 0 && !gw) badges.push(el("span", { class: "badge empty-io" }, "未記入"));
+      if (vis.reads + vis.writes + vis.invokes < tot) badges.push(el("span", { class: "badge b-io", title: "フィルタで一部非表示" }, "フィルタ外 " + (tot - vis.reads - vis.writes - vis.invokes)));
+      var box = el("div", {
+        class: "fnode step-box" + (gw ? " gw" : "") + (open ? " expanded" : "") + (tot === 0 && !gw ? " no-io" : ""),
+        dataset: { node: n.id, kind: "step", role: "step-box", gateway: gw ? "true" : "false", expanded: open ? "true" : "false" },
+        title: n.id + (gw ? "（分岐ノード）" : "") + " — クリックで展開 / ⓘ で詳細",
+        onclick: function (ev) {
+          if (ev.target && ev.target.closest && ev.target.closest(".info")) return;
+          self.toggle(n.id);
+        },
+      },
+        el("div", { class: "t" },
+          el("span", { class: "mk" }, open ? "▾" : "▸"),
+          gw ? el("span", { class: "gwmark", "aria-hidden": "true" }, "◇") : null,
+          el("span", { class: "num" }, order + "."),
+          el("span", { class: "nm" }, n.name),
+          badges,
+          el("span", { class: "badge xcount", dataset: { xcount: n.id } })),
+        el("div", { class: "pvs" }, nodeProvenances(n.id).map(provChip)),
+        open ? el("div", { class: "id" }, n.id) : null,
+        open && md.description ? el("div", { class: "meta" }, md.description) : null,
+        el("button", { class: "info", title: "詳細パネルで開く", "aria-label": "詳細を開く",
+          onclick: function (ev) { ev.stopPropagation(); selectNode(n.id); } }, "ⓘ"));
+      return box;
+    },
+    // 展開時: 左 = reads / 右 = writes + invokes（境界の向こうの格納先つき）
+    fillSides: function (n, box, left, right, placed) {
+      var self = this;
+      var md0 = n.metadata || {};
+      var reads = [], writes = [], calls = [];
+      outsOf(n.id).forEach(function (e) {
+        var t = state.byId.get(e.target);
+        if (!t || !state.vis.nodeSet.has(t.id)) return;
+        if (e.kind === "reads") reads.push({ node: t, edge: e });
+        else if (e.kind === "writes") writes.push({ node: t, edge: e });
+        else if (e.kind === "invokes") calls.push({ node: t, edge: e });
       });
-      if (steps.length > FLOW_COL_CAP) colS.appendChild(moreNote(steps.length - FLOW_COL_CAP));
-
-      // --- 右: 出力・境界（境界の下にその向こうの格納先） ---
-      var colR = el("div", { class: "col", id: "col-output" },
-        el("div", { class: "col-head" }, "出力・境界", el("span", { class: "n" }, String(right.length + bounds.length))));
-      right.slice(0, FLOW_COL_CAP).forEach(function (n) { colR.appendChild(flowCard(n, { sub: "出力" })); });
-      bounds.forEach(function (b) {
-        colR.appendChild(flowCard(b, { sub: "境界" }));
-        var subs = boundaryBackends(b);
-        var wrap = el("div", { class: "sub-wrap", dataset: { under: b.id } },
+      var io = stepIoCount(n.id);
+      if (reads.length) left.appendChild(el("div", { class: "side-head" }, "このステップの読み取り"));
+      reads.forEach(function (x) {
+        var card = flowCard(x.node);
+        left.appendChild(card);
+        placed.add(x.node.id);
+        self.edgeItems.push({ edge: x.edge, fromEl: box, toEl: card });
+      });
+      if (writes.length) right.appendChild(el("div", { class: "side-head" }, "このステップの書き込み"));
+      writes.forEach(function (x) {
+        var card = flowCard(x.node);
+        right.appendChild(card);
+        placed.add(x.node.id);
+        self.edgeItems.push({ edge: x.edge, fromEl: box, toEl: card });
+      });
+      if (calls.length) right.appendChild(el("div", { class: "side-head", style: "margin-top:4px" }, "このステップの呼び出し"));
+      calls.forEach(function (x) {
+        var card = flowCard(x.node);
+        right.appendChild(card);
+        placed.add(x.node.id);
+        self.edgeItems.push({ edge: x.edge, fromEl: box, toEl: card });
+        var subs = boundaryBackends(x.node);
+        if (!subs.length) {
+          right.appendChild(el("div", { class: "hint", style: "margin-left:14px" }, "API の向こうの格納先が未紐づけ — 詳細パネルの後付けフォームで追加できます"));
+          return;
+        }
+        var wrap = el("div", { class: "sub-wrap", dataset: { under: x.node.id } },
           el("div", { class: "lbl dim" }, "↓ API の向こうの格納先"));
-        subs.forEach(function (x) {
-          var card = el("div", {
-            class: "sub-card", dataset: { node: x.node.id, kind: x.node.kind },
-            onclick: function (ev) { ev.stopPropagation(); selectNode(x.node.id); },
-            title: x.node.id,
+        subs.forEach(function (y) {
+          var sub = el("div", {
+            class: "sub-card", dataset: { node: y.node.id, kind: y.node.kind },
+            onclick: function (ev) { ev.stopPropagation(); selectNode(y.node.id); },
+            title: y.node.id,
           },
-            el("span", { class: "kind-label", dataset: { kind: x.node.kind } }, el("span", { class: "kind-dot" })),
-            el("span", {}, x.node.name),
-            el("span", { class: "lbl" }, x.edge.kind === "reads" ? "読み取り" : "書き込み"),
-            provChip(x.edge.provenance),
-            isUnlinked(x.node) ? el("span", { class: "badge cand" }, "未紐づけ") : null);
-          wrap.appendChild(card);
-          self.edgePairs.push({ edge: x.edge, from: b.id, to: x.node.id });
-        }, self);
-        if (subs.length) colR.appendChild(wrap);
-        else colR.appendChild(el("div", { class: "hint", style: "margin-left:14px" }, "格納先が未紐づけ — 詳細パネルの後付けフォームで追加できます"));
+            el("span", { class: "kind-label", dataset: { kind: y.node.kind } }, el("span", { class: "kind-dot" })),
+            el("span", {}, y.node.name),
+            el("span", { class: "lbl" }, y.edge.kind === "reads" ? "読み取り" : "書き込み"),
+            provChip(y.edge.provenance),
+            isUnlinked(y.node) ? el("span", { class: "badge cand" }, "未紐づけ") : null);
+          wrap.appendChild(sub);
+          placed.add(y.node.id);
+          self.edgeItems.push({ edge: y.edge, fromEl: card, toEl: sub });
+        });
+        right.appendChild(wrap);
       });
-      if (right.length > FLOW_COL_CAP) colR.appendChild(moreNote(right.length - FLOW_COL_CAP));
-
-      this.cols.appendChild(colL);
-      this.cols.appendChild(colS);
-      this.cols.appendChild(colR);
-
-      // --- 下段: 未紐づけ候補 ---
+      if (md0.stepKind === "gateway") {
+        // 分岐ノードは I/O が無いのが普通なので、代わりに行先の一覧を出す
+        var br = [];
+        outsOf(n.id).forEach(function (e) {
+          if (e.kind !== "next") return;
+          var t = state.byId.get(e.target);
+          if (t) br.push({ node: t, edge: e });
+        });
+        br.sort(function (a, b) {
+          return ((a.edge.metadata || {}).order || 0) - ((b.edge.metadata || {}).order || 0);
+        });
+        if (br.length) {
+          right.appendChild(el("div", { class: "side-head", style: "margin-top:4px" }, "この分岐の行先"));
+          br.forEach(function (x) {
+            var em = x.edge.metadata || {};
+            right.appendChild(el("div", {
+              class: "sub-card branch" + (em.loop ? " loop" : ""),
+              dataset: { node: x.node.id, kind: "step", branch: "row" },
+              onclick: function (ev) { ev.stopPropagation(); selectNode(x.node.id); },
+              title: x.node.id,
+            },
+              el("span", { class: "lbl" }, em.loop ? "↺" : "→"),
+              el("span", { class: "bl" }, (em.label || "次へ") + ":"),
+              el("span", {}, x.node.name),
+              em.loop ? el("span", { class: "badge loop" }, "ループ") : null,
+              provChip(x.edge.provenance)));
+          });
+        }
+      }
+      if (!reads.length && !writes.length && !calls.length && md0.stepKind !== "gateway") {
+        right.appendChild(el("div", { class: "hint" },
+          io === 0 ? "I/O が未記入です。詳細パネルのフォームで後付けできます。" : "I/O がフィルタで全部隠れています。"));
+      }
+    },
+    renderCandidates: function (placed) {
       var cands = state.vis.nodes.filter(function (n) {
-        return (n.kind === "store" || n.kind === "boundary") && isUnlinked(n) && !colNodes.has(n.id);
+        return (n.kind === "store" || n.kind === "boundary") && isUnlinked(n) && !placed.has(n.id);
       });
       this.band.appendChild(el("div", { class: "col-head" }, "未紐づけ候補（candidate）",
         el("span", { class: "n" }, String(Math.min(cands.length, CAND_CAP)) + " / " + cands.length)));
@@ -1139,34 +1367,95 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
       if (cands.length > CAND_CAP) grid.appendChild(moreNote(cands.length - CAND_CAP));
       if (!cands.length) grid.appendChild(el("div", { class: "hint" }, "未紐づけの候補はありません"));
       this.band.appendChild(grid);
-
-      // --- 描画後に SVG 縁を通す ---
-      steps.forEach(function (st) {
-        outsOf(st.id).forEach(function (e) {
-          var t = state.byId.get(e.target);
-          if (!t) return;
-          if (e.kind === "reads" || e.kind === "writes" || e.kind === "invokes") self.edgePairs.push({ edge: e, from: st.id, to: t.id });
+    },
+    toggle: function (id) {
+      if (state.expanded.has(id)) state.expanded.delete(id);
+      else state.expanded.add(id);
+      this.persist();
+      this.render();
+    },
+    expandAll: function (open) {
+      if (open) {
+        flowSteps(state.byId.get(state.flowId) || { id: "" }).slice(0, this.limit).forEach(function (st) {
+          state.expanded.add(st.id);
         });
+      } else {
+        state.expanded.clear();
+      }
+      this.persist();
+      this.render();
+    },
+    persist: function () {
+      writeHash(); // expanded を hash に載せる（共有 URL にも入る）
+    },
+    // 選択中の格納先・境界と結ばれたステップを強調（何本の縁で結ばれているかも数字で出す）
+    crossHighlight: function () {
+      if (!this.built) return;
+      var sel = state.selected;
+      var node = sel ? state.byId.get(sel) : null;
+      var counts = new Map();
+      if (node && (node.kind === "store" || node.kind === "boundary")) {
+        insOf(sel).forEach(function (e) {
+          if (e.kind !== "reads" && e.kind !== "writes" && e.kind !== "invokes") return;
+          counts.set(e.source, (counts.get(e.source) || 0) + 1);
+          if (e.kind === "invokes") return;
+          var src = state.byId.get(e.source);
+          if (!src || src.kind !== "boundary") return; // 境界の向こう → その境界を呼んでいるステップ
+          insOf(src.id).forEach(function (e2) {
+            if (e2.kind !== "invokes") return;
+            counts.set(e2.source, (counts.get(e2.source) || 0) + 1);
+          });
+        });
+      }
+      document.querySelectorAll("#flow-chart .step-box").forEach(function (box) {
+        var id = box.dataset.node;
+        var c = counts.get(id) || 0;
+        box.classList.toggle("hl", c > 0);
+        var badge = box.querySelector("[data-xcount]");
+        if (badge) {
+          badge.classList.toggle("on", c > 0);
+          badge.textContent = c + " 縁";
+        }
       });
-      this.scheduleEdges();
-      markSelectedInViews();
     },
     scheduleEdges: function () {
       var self = this;
       if (this._raf) cancelAnimationFrame(this._raf);
       this._raf = requestAnimationFrame(function () { self._raf = null; self.drawEdges(); });
     },
+    // layout を読むのはここだけ。展開時とリサイズ時に呼ぶ。
+    measureEdges: function () {
+      if (!this.built || !this.lane) return;
+      var box = this.lane.getBoundingClientRect();
+      this.edgeItems.concat(this.linkItems).forEach(function (it) {
+        if (!it.fromEl.isConnected || !it.toEl.isConnected) { it.d = null; it.bb = null; return; }
+        var ra = it.fromEl.getBoundingClientRect(), rb = it.toEl.getBoundingClientRect();
+        if (it.link) {
+          var g = stepLinkPath(box, ra, rb, it.loop, it.fan);
+          it.d = g.d; it.lx = g.lx; it.ly = g.ly;
+        } else {
+          it.d = bezier(box, ra, rb);
+        }
+        it.bb = {
+          y0: Math.min(ra.top, rb.top) - box.top - 8,
+          y1: Math.max(ra.bottom, rb.bottom) - box.top + 8,
+        };
+      });
+    },
     drawEdges: function () {
-      if (!this.built) return;
-      var svg = this.svg;
-      clear(svg);
-      var box = this.cols.getBoundingClientRect();
-      var w = Math.max(this.cols.scrollWidth, box.width), h = Math.max(this.cols.scrollHeight, box.height);
-      svg.setAttribute("width", w);
-      svg.setAttribute("height", h);
-      svg.setAttribute("viewBox", "0 0 " + w + " " + h);
+      if (!this.built || !this.lane) return;
+      var svg = this.svg, lbl = this.svgLbl;
+      clear(svg); clear(lbl);
+      var box = this.lane.getBoundingClientRect();
+      var w = Math.max(this.lane.scrollWidth, box.width), h = Math.max(this.lane.scrollHeight, box.height);
+      var items = this.edgeItems.concat(this.linkItems);
+      [svg, lbl].forEach(function (g) {
+        g.setAttribute("width", w);
+        g.setAttribute("height", h);
+        g.setAttribute("viewBox", "0 0 " + w + " " + h);
+      });
       var defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
-      [["reads", "#2dd4bf"], ["writes", "#f0883e"], ["invokes", "#bc8cff"]].forEach(function (p) {
+      [["reads", "#2dd4bf"], ["writes", "#f0883e"], ["invokes", "#bc8cff"], ["next", "#3fb950"], ["loop", "#ff7b72"]].forEach(function (p) {
         var m = document.createElementNS("http://www.w3.org/2000/svg", "marker");
         m.setAttribute("id", "mk-" + p[0]);
         m.setAttribute("markerWidth", "7"); m.setAttribute("markerHeight", "7");
@@ -1179,29 +1468,56 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
         defs.appendChild(m);
       });
       svg.appendChild(defs);
-      this.edgePairs.forEach(function (pair) {
-        var a = document.querySelector('#view-flow [data-node="' + cssEscape(pair.from) + '"]');
-        var b = document.querySelector('#view-flow [data-node="' + cssEscape(pair.to) + '"]');
-        if (!a || !b) return;
-        var d = bezier(box, a.getBoundingClientRect(), b.getBoundingClientRect());
-        if (!d) return;
-        var k = pair.edge.kind;
+      var sel = state.selected;
+      var selNode = sel ? state.byId.get(sel) : null;
+      var ioSel = selNode && (selNode.kind === "store" || selNode.kind === "boundary");
+      var cull = items.length > EDGE_CULL_MIN;
+      var win0 = -1e9, win1 = 1e9;
+      if (cull) {
+        var sr = this.scroll.getBoundingClientRect();
+        win0 = sr.top - box.top - 160;
+        win1 = sr.bottom - box.top + 160;
+      }
+      var skipped = 0;
+      items.forEach(function (it) {
+        if (!it.d) return;
+        var k = it.edge.kind;
+        if (it.loop) k = "loop";
+        var related = sel && (it.edge.source === sel || it.edge.target === sel);
+        if (cull && !related && it.bb && (it.bb.y1 < win0 || it.bb.y0 > win1)) { skipped++; return; }
+        var d = it.d;
         var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
         path.setAttribute("d", d);
-        path.setAttribute("class", "edge " + k + ((pair.edge.provenance === "llm" || pair.edge.provenance === "human") ? " dash" : "") +
-          (state.selected && (pair.edge.source === state.selected || pair.edge.target === state.selected) ? " hl" : ""));
+        path.setAttribute("class", "edge " + k + ((it.edge.provenance === "llm" || it.edge.provenance === "human") ? " dash" : "") +
+          (related ? " hl" : (ioSel ? " dimmed" : "")));
         path.setAttribute("marker-end", "url(#mk-" + k + ")");
-        path.setAttribute("data-edge", pair.edge.source + "|" + k + "|" + pair.edge.target);
+        // data-edge の種別は縁の実際の kind（ループも next）。見た目の色は class 側で分ける
+        path.setAttribute("data-edge", it.edge.source + "|" + it.edge.kind + "|" + it.edge.target);
         var title = document.createElementNS("http://www.w3.org/2000/svg", "title");
-        title.textContent = k + " / " + provLabel(pair.edge.provenance) + (pair.edge.note ? "\n" + pair.edge.note : "");
+        var tip = it.edge.kind + " / " + provLabel(it.edge.provenance);
+        if (it.label) tip += "「" + it.label + "」";
+        if (it.loop) tip += " ↺ ループ";
+        title.textContent = tip + (it.edge.note ? "\n" + it.edge.note : "");
         path.appendChild(title);
         path.style.pointerEvents = "stroke";
         path.style.cursor = "pointer";
-        (function (edge) {
-          path.addEventListener("click", function () { openEdge(edge); });
-        })(pair.edge);
+        path.addEventListener("click", function () { openEdge(it.edge); });
         svg.appendChild(path);
+        if (!it.link || !it.label) return;
+        // ラベルはカードより上のレイヤに置く（展開中でも読める）
+        var t = document.createElementNS("http://www.w3.org/2000/svg", "text");
+        t.setAttribute("x", it.lx.toFixed(1));
+        t.setAttribute("y", it.ly.toFixed(1));
+        t.setAttribute("class", (it.loop ? "loop" : "next") + (related ? " hl" : (ioSel ? " dimmed" : "")));
+        t.setAttribute("data-label", it.edge.source + "|" + it.edge.target);
+        t.textContent = (it.loop ? "↺ " : "") + it.label;
+        lbl.appendChild(t);
       });
+      if (this.hudCull) {
+        var msg = skipped ? "画面外の縁 " + skipped.toLocaleString() + " 本は描画中略" : "";
+        this.hudCull.textContent = msg;
+        this.hudCull.style.display = msg ? "" : "none";
+      }
     },
   };
   function cssEscape(s) {
@@ -1271,7 +1587,6 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
     },
       el("div", { class: "t" },
         el("span", { class: "kind-label", dataset: { kind: n.kind } }, el("span", { class: "kind-dot" })),
-        opts.step ? el("span", { class: "dim mono" }, String(opts.order) + ".") : null,
         el("span", { class: "nm" }, n.name),
         un && n.kind === "step" && io === 0 ? el("span", { class: "badge empty-io" }, "未記入") : null,
         un && (n.kind === "store" || n.kind === "boundary") ? el("span", { class: "badge cand" }, "未紐づけ") : null),
@@ -1284,24 +1599,42 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
     if (md.docs) meta.push(el("span", { class: "linkish", onclick: function (ev) { ev.stopPropagation(); selectNode(n.id); }, title: String(md.docs) }, "docs"));
     if (meta.length) card.appendChild(el("div", { class: "meta" }, meta));
     if (md.description) card.appendChild(el("div", { class: "meta" }, md.description));
-    if (opts.step) {
-      var ioLine = ioLineOf(n.id);
-      if (ioLine.length) card.appendChild(el("div", { class: "meta" }, ioLine));
-    }
     card.appendChild(el("div", { class: "pvs" }, nodeProvenances(n.id).map(provChip)));
     return card;
   }
-  function ioLineOf(id) {
-    var out = [];
-    outsOf(id).forEach(function (e) {
-      if (e.kind !== "reads" && e.kind !== "writes" && e.kind !== "invokes" && e.kind !== "implemented-by") return;
-      var t = state.byId.get(e.target);
-      if (!t) return;
-      out.push(el("span", { class: "linkish", title: e.kind, onclick: function (ev) { ev.stopPropagation(); selectNode(t.id); } },
-        (e.kind === "reads" ? "in←" : e.kind === "writes" ? "out→" : e.kind === "invokes" ? "call→" : "code:") + t.name));
-    });
-    return out;
+  // 線形 next（ラベルもループも無い）ならその縁を返す。▼ を置くかどうかの判定に使う
+  function linearNextEdge(fromId, toId) {
+    var list = state.out.get(fromId) || [];
+    for (var i = 0; i < list.length; i++) {
+      var e = list[i];
+      if (e.kind !== "next" || e.target !== toId) continue;
+      if (!state.filters.provs.has(e.provenance)) return null;
+      var md = e.metadata || {};
+      if (md.label || md.loop) return null; // 分岐・ループは側面を回る縁で描く
+      return e;
+    }
+    return null;
   }
+  // ステップ ⇄ ステップの縁。分岐はレーン右側、前方向ループは左側を回る。
+  // ラベルは曲線の途中点（t=0.5）に置く。
+  function stepLinkPath(box, ra, rb, loop, fan) {
+    var y1 = ra.top - box.top + ra.height / 2, y2 = rb.top - box.top + rb.height / 2;
+    var off = 13 + (fan || 0) * 20;
+    var x1, x2, cx;
+    if (loop) {
+      x1 = ra.left - box.left; x2 = rb.left - box.left;
+      cx = Math.max(6, Math.min(x1, x2) - off);
+    } else {
+      x1 = ra.left - box.left + ra.width; x2 = rb.left - box.left + rb.width;
+      cx = Math.max(x1, x2) + off;
+    }
+    return {
+      d: "M" + x1 + "," + y1 + " C" + cx + "," + y1 + " " + cx + "," + y2 + " " + x2 + "," + y2,
+      lx: cx + (loop ? -5 : 5),
+      ly: (y1 + y2) / 2,
+    };
+  }
+
   // 2 つのカードの間にベジェ。a/b の相対位置で出る辺・入る辺を決める
   function bezier(box, ra, rb) {
     var ax = ra.left - box.left, ay = ra.top - box.top, aw = ra.width, ah = ra.height;
@@ -1317,14 +1650,14 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
       if (by < ay) { y1 = ay; y2 = by + bh; } else { y1 = ay + ah; y2 = by; }
       x1 = acx; x2 = bcx;
     }
-    var dx = x2 - x1, dy = y2 - y1;
-    var c;
+    // 制御点を両端の中点に置く。段差が小さいときに制御点が外へ回って
+    // ループ（巻き戻り）になるのを防げる。
     if (horizontal) {
-      c = Math.max(36, Math.abs(dx) * 0.45);
-      return "M" + x1 + "," + y1 + " C" + (x1 + (dx > 0 ? c : -c)) + "," + y1 + " " + (x2 + (dx > 0 ? -c : c)) + "," + y2 + " " + x2 + "," + y2;
+      var mx = (x1 + x2) / 2;
+      return "M" + x1 + "," + y1 + " C" + mx + "," + y1 + " " + mx + "," + y2 + " " + x2 + "," + y2;
     }
-    c = Math.max(24, Math.abs(dy) * 0.4);
-    return "M" + x1 + "," + y1 + " C" + x1 + "," + (y1 + (dy > 0 ? c : -c)) + " " + x2 + "," + (y2 + (dy > 0 ? -c : c)) + " " + x2 + "," + y2;
+    var my = (y1 + y2) / 2;
+    return "M" + x1 + "," + y1 + " C" + x1 + "," + my + " " + x2 + "," + my + " " + x2 + "," + y2;
   }
 
   // ==========================================================
@@ -2225,6 +2558,8 @@ form.ann summary { cursor: pointer; font-size: 12px; color: var(--fg); font-weig
           el("div", { class: "er-top" },
             el("span", { class: "dim" }, dir === "out" ? "→" : "←"),
             nodeLink(other, on ? on.name : other),
+            e.metadata && e.metadata.label ? el("span", { class: "badge", title: "next の条件ラベル" }, String(e.metadata.label)) : null,
+            e.metadata && e.metadata.loop ? el("span", { class: "badge loop" }, "ループ") : null,
             provChip(e.provenance),
             el("span", { class: "er-conf" }, confText(e.confidence)),
             e.metadata && e.metadata.access ? el("span", { class: "badge" }, "access: " + e.metadata.access) : null),
