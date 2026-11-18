@@ -33,8 +33,11 @@ if (opt.help || !opt.graph || !opt.out) {
 
 const graph = readFileSync(opt.graph, "utf8").trim();
 JSON.parse(graph); // 壊れていたらここで止める
-// </script> で script タグを閉じられないための保険（JSON 内の </ は文字列の中だけ）
-const payload = graph.replaceAll("</", "<\\/");
+// script タグを閉じられないための保険。`</script>` だけでなく `<!--`（script を escaped
+// state に入れて素の `</script>` を無効化し内容が画面に漏れる）も防ぐため、`<` を
+// 全部 \u003c にエスケープする。JSON の構造文字に `<` は無いので必ず文字列リテラル
+// 内で、\u003c は JSON.parse で < に戻る（JSON として有効なまま HTML を安全化）。
+const payload = graph.replaceAll("<", "\\u003c");
 
 const template = readFileSync(opt.template, "utf8");
 if (!template.includes(MARKER)) {
@@ -42,9 +45,10 @@ if (!template.includes(MARKER)) {
   process.exit(1);
 }
 // 順序が大事: 先にタイトル（payload 内の __TITLE__ を巻き込まない），
-// payload は関数で差し込む（コード抜粋に $& や $' があっても置換pecial扱いされない）
+// どちらも関数で差し込む（文字列リプレイサだとタイトルや payload の `$&` `$'` `$\`` が
+// 置換特殊文字として展開され、入力を壊す）
 const html = template
-  .replaceAll("__TITLE__", escapeHtml(opt.title))
+  .replaceAll("__TITLE__", () => escapeHtml(opt.title))
   .replace(MARKER, () => payload);
 mkdirSync(dirname(opt.out), { recursive: true });
 writeFileSync(opt.out, html);

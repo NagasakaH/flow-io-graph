@@ -180,3 +180,98 @@ test("同じ flow id を別ファイルで再定義したら警告する", (t) =
   assert.equal(graph.nodes.filter((n) => n.kind === "flow").length, 1);
   assert.match(stderr, /flow flow:x は別定義とマージされます/);
 });
+
+test("別フローの step を指す contains 注釈は警告して捨て、親と source の一致だけ受理する", () => {
+  const { graph, stderr } = run({
+    "flows/f.json": flowDoc({
+      id: "x",
+      steps: [{ id: "a", name: "a" }, { id: "b", name: "b" }],
+    }),
+    "ann.json": {
+      schemaVersion: 1,
+      edges: [{ source: "flow:x", target: "step:x/a", kind: "contains", confidence: 0.9, note: "再掲（同一親なので無害）" }],
+    },
+  });
+  const contains = graph.edges.filter((e) => e.kind === "contains");
+  assert.equal(contains.length, 2, `既存 2 本のはずが ${contains.length}`);
+
+  const bad = run({
+    "flows/f.json": { schemaVersion: 1, flows: [
+      { id: "x", steps: [{ id: "a", name: "a" }] },
+      { id: "y", steps: [{ id: "b", name: "b" }] },
+    ] },
+    "ann.json": {
+      schemaVersion: 1,
+      edges: [{ source: "flow:x", target: "step:y/b", kind: "contains", confidence: 0.9, note: "よそのフローに差し込む試み" }],
+    },
+  });
+  assert.match(bad.stderr, /端点の型が規則外/);
+  assert.ok(!bad.graph.edges.some((e) => e.source === "flow:x" && e.target === "step:y/b"), "越境 contains が残った");
+});
+
+test("注釈 next の label は別縁として立ち、戻る向きは loop が付く。touches の access も保持", () => {
+  const { graph, stderr } = run({
+    "flows/f.json": flowDoc({
+      id: "x",
+      steps: [{ id: "a", name: "a" }, { id: "b", name: "b" }],
+    }),
+    "scan.json": { schemaVersion: 1, files: [{ path: "s.rb", lang: "ruby", signals: [] }], stores: [{ id: "store:table/orders", name: "orders", storeKind: "table" }], boundaries: [] },
+    "ann.json": {
+      schemaVersion: 1,
+      edges: [
+        { source: "step:x/a", target: "step:x/b", kind: "next", confidence: 0.8, note: "人間が追記した条件", metadata: { label: "例外系" } },
+        { source: "step:x/b", target: "step:x/a", kind: "next", confidence: 0.8, note: "巻き戻し", metadata: { label: "re" } },
+        { source: "code:s.rb", target: "store:table/orders", kind: "touches", confidence: 0.8, note: "生ファイル名", metadata: { access: "read" } },
+      ],
+    },
+  });
+  const ab = graph.edges.filter((e) => e.kind === "next" && e.source === "step:x/a" && e.target === "step:x/b");
+  assert.equal(ab.length, 2, `定義の無 label 縁と注釈の label 縁が並存しない: ${JSON.stringify(ab.map((e) => e.metadata))}`);
+  assert.equal(ab.find((e) => e.metadata?.label === "例外系").provenance, "llm");
+  const back = graph.edges.find((e) => e.kind === "next" && e.source === "step:x/b" && e.target === "step:x/a");
+  assert.equal(back.metadata.loop, true, "戻る向きなのに loop が付かない");
+  const touch = graph.edges.find((e) => e.kind === "touches");
+  assert.equal(touch.metadata.access, "read");
+  assert.doesNotMatch(stderr, /規則外/);
+
+  const badAcc = run({
+    "flows/f.json": flowDoc({ id: "x", steps: [{ id: "a", name: "a" }] }),
+    "scan.json": { schemaVersion: 1, files: [{ path: "s.rb", lang: "ruby", signals: [] }], stores: [{ id: "store:table/orders", name: "orders", storeKind: "table" }], boundaries: [] },
+    "ann.json": {
+      schemaVersion: 1,
+      edges: [{ source: "code:s.rb", target: "store:table/orders", kind: "touches", confidence: 0.8, note: "x", metadata: { access: "modify" } }],
+    },
+  });
+  assert.match(badAcc.stderr, /access "modify" が規則外/);
+  assert.ok(!badAcc.graph.edges.some((e) => e.kind === "touches"), "不正 access の touches が残った");
+});
+
+test("render: 抜粋の <!-- や <script>、タイトルの $& を壊さず埋め込まない", () => {
+  const { spawnSync: sp } = { spawnSync: spawnSync };
+  const dir = mkdtempSync(join(tmpdir(), "flowrd-"));
+  const flows = join(dir, "flows");
+  mkdirSync(flows, { recursive: true });
+  writeFileSync(join(flows, "f.json"), JSON.stringify(flowDoc({
+    id: "x",
+    steps: [{ id: "a", name: "a" }],
+  })));
+  writeFileSync(join(dir, "ann.json"), JSON.stringify({
+    schemaVersion: 1,
+    nodes: [{ id: "store:table/t", name: "t", metadata: { note: "<!-- 怪しい抜粋 <script>alert(1)</script> -->" } }],
+    edges: [],
+  }));
+  const graphPath = join(dir, "graph.json");
+  let r = sp(process.execPath, [BIN, "--flows", flows, "--annotation", join(dir, "ann.json"), "--out", graphPath], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  const htmlPath = join(dir, "flow.html");
+  r = sp(process.execPath, [join(import.meta.dirname, "bin", "render.mjs"), "--graph", graphPath, "--out", htmlPath, "--title", "$&予期<!--$'"], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  const html = readFileSync(htmlPath, "utf8");
+  assert.ok(!html.includes("$&予期"), "タイトルが未サニタイズ");
+  assert.ok(!html.includes("__TITLE__amp") && !html.includes("__TITLE__予期"), "タイトル置換で $ 特殊展開が起きた");
+  assert.ok(!/<script[^>]*id="graph-data"[^>]*>[\s\S]*?<!--/.test(html), "payload に素の <!-- が残る");
+  const m = html.match(/<script id="graph-data" type="application\/json">([\s\S]*?)<\/script>/);
+  const parsed = JSON.parse(m[1]);
+  const note = parsed.nodes.find((n) => n.id === "store:table/t").metadata.note;
+  assert.equal(note, "<!-- 怪しい抜粋 <script>alert(1)</script> -->", "JSON.parse で原文に戻らない");
+});

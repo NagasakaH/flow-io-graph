@@ -74,7 +74,7 @@ test("touches は code→store/boundary に張り、access をシグナル名か
   const invoke = edge(graph, "code:src/label.ts", "touches", "boundary:http/label-api/print");
   assert.equal(invoke.metadata.access, "invoke");
   const kv = edge(graph, "code:src/pick.py", "touches", "store:kv/wms-tokens");
-  assert.equal(kv.metadata.access, "access", "read/write を区別できないシグナルは access");
+  assert.equal(kv.metadata.access, "unknown", "read/write を区別できないシグナルは unknown（方向未判定）");
   // ref null シグナルは縁にしない（コードノードの metadata には残る）
   assert.equal(edge(graph, "code:src/pick.py", "touches", "boundary:http/null"), undefined);
   assert.equal(node(graph, "code:src/pick.py").metadata.signals.length, 3);

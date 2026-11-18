@@ -59,13 +59,13 @@ worklist.mjs ←─ graph.json（LLM が注釈を書くためのワークシー�
 
 | kind | source → target | 意味 |
 | --- | --- | --- |
-| `contains` | flow → step | 階層（`parent` とあわせて持つ） |
-| `next` | step → step | フロー内の進行（`metadata.order` に連番、分岐は `metadata.label` に条件ラベル。`to` が前方向ならループ） |
+| `contains` | flow → step | 階層（`parent` とあわせて持つ。注釈で張る場合は `step.parent` と `source` の flow が一致するものだけ受理） |
+| `next` | step → step | フロー内の進行（`metadata.order` に連番、分岐は `metadata.label` に条件ラベル。`to` が自身より前（または自分自身）ならループ） |
 | `reads` | step / boundary → store | 入力に読む |
 | `writes` | step / boundary → store | 出力に書く |
 | `invokes` | step → boundary | API 実行などの境界を呼ぶ |
 | `implemented-by` | step → code | そのステップを実装しているコード（主に注釈） |
-| `touches` | code → store / boundary | スキャンがコード内で検出したアクセス（`metadata.access` = `read` / `write` / `invoke`。access が違えば同一端点でも別縁） |
+| `touches` | code → store / boundary | スキャンがコード内で検出したアクセス（`metadata.access` = `read` / `write` / `invoke`、方向が特定できないものは `unknown`＝方向未判定。access が違えば同一端点でも別縁） |
 
 `boundary → store` の `reads` / `writes` が「API の向こう側で最終的にどのテーブル/ファイルに
 届くか」を表す。境界の向こうはコードに見えないので、原則として注釈（`llm` / `human`）が張る。
@@ -145,13 +145,17 @@ JSON にコメントを許す（JSONC）。`--flows` に渡したディレクト
   辿って到達できない**場合も警告する（グラフにしないよりマシなので張るが、穴は残さない。
   到達判定は入口からの到達可能集合で見るため、入口から孤立した島も拾う）
 - 同じステップに `reads` と `writes` で同じ参照を書くと双向の縁になる（自己ループにはしない）。
-  scan 由来の `touches` も、同一コード×同一格納先でも `access`（read / write / invoke）が
+  scan 由来の `touches` も、同一コード×同一格納先でも `access`（read / write / invoke / unknown）が
   違えば別縁（信号の並び順に依存せず、読みと書きは混ざらない）
 - **ID の正規化**: store/boundary の ID は scan 候補・注釈ノード・注釈エッジの端点・
   metadata 注釈の match まで、参照と同じ規則（小文字、`_` と空白は `-`）に寄せる。
   `Order_Items` と `order-items` は同一ノード。表示名は原表記のまま残す
 - **縁の端点の型**: 上の縁の表の向きどおりだけを受理する（例: `reads` の source は step か
   boundary、target は store）。型違反の注釈エッジは警告して捨てる
+- **注釈エッジの metadata は縁分けに効く**: 注釈の `next` に付けた `metadata.label` は
+  定義縁と別縁として並び、戻る向き（`to` が自分より前）なら定義側と同じく `loop` が付く。
+  注釈の `touches` の `metadata.access` は `read` / `write` / `invoke` / `unknown` だけ受理し、
+  それ以外は警告して捨てる（捨てずに素通りさせると同一端点の縁に黙って統合される）
 - **出所は書き換え不可**: metadata 注釈の `set` に `provenance` を書いても拒否して警告する
   （llm 注釈が「人」や「静的解析」を装う通路にしない）。他のキーは 通常どおり適用
 - **step id の重複**は後の定義を警告付きでスキップ（`order` の連番も崩れない）。

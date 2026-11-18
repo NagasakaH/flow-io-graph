@@ -100,7 +100,7 @@ function canonicalId(id) {
 
 // 縁の端点の型規則。注釈由来でも手作りでも、契約（docs/schema.md）の向きのまましか張らない
 const EDGE_SHAPE = {
-  contains: (s, t) => s.kind === "flow" && t.kind === "step",
+  contains: (s, t) => s.kind === "flow" && t.kind === "step" && t.parent === s.id,
   next: (s, t) => s.kind === "step" && t.kind === "step" && s.parent === t.parent,
   reads: (s, t) => ["step", "boundary"].includes(s.kind) && t.kind === "store",
   writes: (s, t) => ["step", "boundary"].includes(s.kind) && t.kind === "store",
@@ -156,11 +156,13 @@ if (opt.scan) {
     });
   }
   const signalAccess = (signal) => {
-    if (!signal) return "access";
+    // 方向が特定できないスキャン信号は "unknown"（方向未判定）。view は「方向未判定」と出す。
+    // kind 名 "touches" と同じ語を値にすると `access: access` と訳が分からなくなる
+    if (!signal) return "unknown";
     if (signal.endsWith("-read")) return "read";
     if (signal.endsWith("-write")) return "write";
     if (["http-call", "lambda-invoke", "sfn-start"].includes(signal)) return "invoke";
-    return "access";
+    return "unknown";
   };
   const candidate = (list, kindField, metaField) => {
     for (const c of list ?? []) {
@@ -395,7 +397,38 @@ for (const file of [...(opt.annotation ?? [])].sort(byString)) {
     }
     confidence = Math.min(1, Math.max(0, confidence));
     if (!e.note) warn(`${file}: ${e.source} -${kind}-> ${e.target} に note がありません（根拠を書いてください）`);
-    addEdge(e.source, e.target, kind, { provenance: producer, confidence, note: e.note });
+    // metadata を種別ごとに引き継ぐ。捨てると addEdge の縁分け（label・access・loop）に
+    // 届かず、条件違いの next や読み書き違いの touches が定義縁に黙って統合される
+    let metadata;
+    if (kind === "next") {
+      metadata = {};
+      if (e.metadata && typeof e.metadata.label === "string") metadata.label = e.metadata.label;
+      const orderOf = (stepId) => {
+        for (const ed of edges.values()) {
+          if (ed.kind === "contains" && ed.target === stepId) return ed.metadata?.order;
+        }
+        return undefined;
+      };
+      const os = orderOf(e.source);
+      const ot = orderOf(e.target);
+      if (os !== undefined && ot !== undefined && ot <= os) metadata.loop = true; // 定義側と同じ「戻る縁はループ」
+      if (Object.keys(metadata).length === 0) metadata = undefined;
+    } else if (kind === "touches") {
+      const acc = e.metadata?.access;
+      if (acc !== undefined) {
+        if (!["read", "write", "invoke", "unknown"].includes(acc)) {
+          warn(`${file}: touches の access "${acc}" が規則外なので縁を捨てました (${e.source} -> ${e.target}。read / write / invoke のいずれか)`);
+          continue;
+        }
+        metadata = { access: acc };
+      }
+    }
+    addEdge(e.source, e.target, kind, {
+      provenance: producer,
+      confidence,
+      note: e.note,
+      ...(metadata ? { metadata } : {}),
+    });
   }
 
   for (const m of doc.metadata ?? []) {
