@@ -1559,6 +1559,13 @@ html[data-theme="light"] {
         var rest = idxs.slice(g.out.length).sort(function (a, b) { return a - b; });
         g.out.forEach(function (it, i2) { it.gslot = (pick[i2] - (m - 1) / 2) * step; });
         g.lnd.forEach(function (it, i2) { it.landSlot = (rest[i2] - (m - 1) / 2) * step; });
+        // たたみ時の下面左辺への横進入の順序。区間の深い縁ほど外側ガター（x が
+        // 小さい）を通るので、その順で辺の上（y が小さい）に置く。外側の横走りが
+        // 内側の戻る線と交わらない入れ子になる
+        var lndS = g.lnd.slice().sort(function (a, b) {
+          return (idx.get(b.edge.source) || 0) - (idx.get(a.edge.source) || 0);
+        });
+        lndS.forEach(function (it, i2) { it.landIdx = i2; it.landN = lndS.length; });
       });
       // 同じ側で絡み合う（s < s' < t < t' のように区間が交差する）2 本は平面に描けないので、
       // 下の行から出る縁を反対側へ回す。
@@ -2156,7 +2163,8 @@ var row = sc.closest(".fc-row");
               loop: it.loop, self: it.self, side: it.side, up: !!it.back, chan: it.chan,
               chanBack: it.chanBack || 0, chanFwd: it.chanFwd || 0, fan: it.fan,
               laneUsed: !!it.laneUsed,
-              srcGw: it.srcGw, dstGw: it.dstGw, vert: it.vert, gslot: it.gslot || 0, landSlot: it.landSlot || 0, gBase: sideGap,
+              srcGw: it.srcGw, dstGw: it.dstGw, vert: it.vert, gslot: it.gslot || 0, landSlot: it.landSlot || 0,
+              landIdx: it.landIdx || 0, landN: it.landN || 0, gBase: sideGap,
               near: it.near, srcRowB: rowBotOf(it.fromEl), dstRowB: rowBotOf(it.toEl),
               srcRow: it.fromEl && it.fromEl.closest ? it.fromEl.closest(".fc-row") : null,
               arr: it.arr || 0, arrCount: it.arrCount || 0, outCount: it.outCount || 0,
@@ -2317,13 +2325,12 @@ var row = sc.closest(".fc-row");
         svg.appendChild(path);
         try {
           var ln = path.getTotalLength();
-          var ekey = it.edge.source + "|" + it.edge.kind + "|" + it.edge.target;
           for (var q = Math.max(0, ln - 10); q <= ln; q += 2) {
             var pp = path.getPointAtLength(q);
             // ±4px: 検査器の矢じり占有モデル（終端 12px ±4px）と同じ幅で覚える。
             // ±2 だと検査の 4px 閾値との間に 2px の隙間が残った（たたみ 1440:
             // 別条件ラベルが 114.5 に着いても三角模型は 114.3 まで届く）
-            arrows.push({ k: ekey, x0: pp.x - 4, x1: pp.x + 4, y0: pp.y - 4, y1: pp.y + 4 });
+            arrows.push({ k: String(ii), x0: pp.x - 4, x1: pp.x + 4, y0: pp.y - 4, y1: pp.y + 4 });
           }
         } catch (e) { /* 長さが測れない縁は無視する */ }
         if (!it.link || !it.label) return;
@@ -2352,7 +2359,7 @@ var row = sc.closest(".fc-row");
         lbl.appendChild(t);
         var lrow = lane.querySelector('.step-box[data-node="' + cssEscape(it.edge.source) + '"]');
         labels.push({
-        t: t, x: it.lx, y: it.ly, loop: !!it.loop, soft: !!it.loop,
+        t: t, x: it.lx, y: it.ly, loop: !!it.loop, soft: !!it.loop, eid: String(ii),
         key: it.edge.source + "|" + it.edge.kind + "|" + it.edge.target,
         end: !!it.loop || !!it.endAnchor, keepX: !!it.keepX,
         row: lrow ? lrow.closest(".fc-row") : null,
@@ -2414,7 +2421,7 @@ var row = sc.closest(".fc-row");
         if (!probeP) {
           probeP = this._probePath = document.createElementNS("http://www.w3.org/2000/svg", "path");
         }
-        items.forEach(function (it) {
+        items.forEach(function (it, ix) {
           if (!it.d) return;
           if (!it._segs || it._segsD !== it.d) {
             it._segs = []; it._segsD = it.d;
@@ -2424,9 +2431,10 @@ var row = sc.closest(".fc-row");
               for (var q2 = 0; q2 < lnl; q2 += 8) {
                 var p0 = probeP.getPointAtLength(q2);
                 var p1 = probeP.getPointAtLength(Math.min(lnl, q2 + 8));
+                // 所有者は縁の eid（インデックス）。dedge（src|kind|tgt）だと
+                // 双子縁を「自分の線」と誤認して避けなくなる（実測 labelHidesLine）
                 it._segs.push([Math.min(p0.x, p1.x) - 1, Math.min(p0.y, p1.y) - 1,
-                  Math.max(p0.x, p1.x) + 1, Math.max(p0.y, p1.y) + 1,
-                  it.edge.source + "|" + it.edge.kind + "|" + it.edge.target]);
+                  Math.max(p0.x, p1.x) + 1, Math.max(p0.y, p1.y) + 1, String(ix)]);
               }
             } catch (e) { it._segs = []; }
           }
@@ -2511,7 +2519,7 @@ var row = sc.closest(".fc-row");
             for (var i4 = 0; i4 < arrowObs.length; i4++) {
               // 終端に錨を置くラベル（↺ と flip）は自分の矢印のそばに置く設計なので数えない。
               // 検査はラベルの文字（土台より小さい）と矢印の先を見るので余白なしで判定する
-              if (L.end && arrowObs[i4].k === L.key) continue;
+              if (L.end && arrowObs[i4].k === L.eid) continue;
               if (cross(Rc, arrowObs[i4])) return false;
             }
           }
@@ -2522,7 +2530,7 @@ var row = sc.closest(".fc-row");
               if (!bsk) continue;
               for (var i7 = 0; i7 < bsk.length; i7++) {
                 var SG = bsk[i7];
-                if (SG[4] === L.key) continue;
+                if (SG[4] === L.eid) continue;
                 if (Rl.x1 > SG[0] && Rl.x0 < SG[2] && Rl.y1 > SG[1] && Rl.y0 < SG[3]) return false;
               }
             }
@@ -2610,7 +2618,7 @@ var row = sc.closest(".fc-row");
             if (!bk2) continue;
             for (var ic = 0; ic < bk2.length; ic++) {
               var S3 = bk2[ic];
-              if (S3[4] === L.key) continue;
+              if (S3[4] === L.eid) continue;
               if (Rl2.y1 > S3[1] && Rl2.y0 < S3[3]) return false;
             }
           }
@@ -2708,7 +2716,7 @@ var row = sc.closest(".fc-row");
                   if (!bk4) continue;
                   for (var id4 = 0; id4 < bk4.length; id4++) {
                     var S4 = bk4[id4];
-                    if (S4[4] === L.key) continue;
+                    if (S4[4] === L.eid) continue;
                     if (Rl4.x1 > S4[0] && Rl4.x0 < S4[2] && Rl4.y1 > S4[1] && Rl4.y0 < S4[3]) { clash = true; break; }
                   }
                   if (clash) break;
@@ -2772,7 +2780,7 @@ var row = sc.closest(".fc-row");
           if (!bq) continue;
           for (var iq = 0; iq < bq.length; iq++) {
             var Sq = bq[iq];
-            if (Sq[4] === Lb.key) continue;
+            if (Sq[4] === Lb.eid) continue;
             if (Rq.x1 > Sq[0] && Rq.x0 < Sq[2] && Rq.y1 > Sq[1] && Rq.y0 < Sq[3]) return false;
           }
         }
@@ -2826,7 +2834,7 @@ var row = sc.closest(".fc-row");
       var arrowFree2 = function (Lb, Rx) {
         for (var aq = 0; aq < arrows.length; aq++) {
           var Aq = arrows[aq];
-          if (Aq.k === Lb.key) continue;
+          if (Aq.k === Lb.eid) continue;
           if (Rx.x1 > Aq.x0 && Rx.x0 < Aq.x1 && Rx.y1 > Aq.y0 && Rx.y0 < Aq.y1) return false;
         }
         return true;
@@ -3446,6 +3454,35 @@ var row = sc.closest(".fc-row");
          " L" + ex + "," + tipY,
       tan: up ? -90 : 90, face: up ? "up" : "down", keepX: true, end: true, lx: gx - 8, ly: lblY,
     };
+    // たたみ時のゲートウェイ宛て戻る縁は、下辺の左半分へ横から入る。頂点近くへ
+    // 縦に上がると、直前の水平走りが次の行のカード上端すぐ上を掃いて、その行へ
+    // 上辺から入る分岐縁の矢じりに触れる（実測 s000→s001 双子の矢じり × s008 の
+    // 戻る縁、s000 の直下に 16px の隙間しかない）。辺へ横に入れば次の行の帯に
+    // 一切寄らない。区間の深い縁ほど辺の上に入り、横走りが内側の縦線と交わらない
+    if (o.dstGw && up && !open && !o.vert) {
+      var fN = Math.max(1, o.landN || 1);
+      var fK = Math.max(0, Math.min(fN - 1, o.landIdx || 0));
+      // 刻みは頂点から 0.78 以内（左頂点からは自分ループ ↺ が水平に出ていて、
+      // その往路に矢じりが触れる。実測 s008 の矢じり × s000 の ↺）〜 0.31
+      // （出口スロットの始点より 12px 以上左。出口は内側目盛なので 0.31 を切る
+      // ことはない）。隣り合う着地の対角間隔が 12px を切るときは元の下面進入に
+      // 戻る（辺が短くて矢じりを並べられない）
+      var uIn = fN > 1 ? 0.78 - fK * (0.47 / (fN - 1)) : 0.55;
+      var fromRight = gx > bcx;
+      var xIn = fromRight ? bcx + (bw / 2) * uIn : bcx - (bw / 2) * uIn;
+      var yIn = bb - (bh / 2) * uIn;
+      var tipD = Math.hypot(bw / 2, bh / 2) * 0.47 / Math.max(1, fN - 1);
+      if (tipD >= 12 && (fromRight ? gx - xIn : xIn - gx) >= 26) {
+        var sgn = fromRight ? 1 : -1;
+        front = {
+          d: d + " L" + gx + "," + (yIn + 26) +
+             " C" + gx + "," + (yIn + 8) + " " + (xIn + sgn * 24) + "," + yIn + " " + (xIn + sgn * 8) + "," + yIn +
+             " L" + xIn + "," + yIn,
+          tan: fromRight ? 180 : 0, face: fromRight ? "right" : "left",
+          keepX: true, end: true, lx: gx - sgn * 8, ly: yIn - 8,
+        };
+      }
+    }
     // 他のボックス（ひし形は輪郭）の中を横切るなら側面から入り直す
     if (!pathHits(o.probe, front.d, o.others)) return front;
 
