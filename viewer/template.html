@@ -1633,6 +1633,11 @@ html[data-theme="light"] {
         g.out.forEach(function (e2) {
           if (!e2.exitOver && typeof e2.gslot === "number") sl.push(e2.gslot);
         });
+        // 下辺に縦で着く戻る縁の目盛も占有する。退避着地はこの列の上に矢じりを
+        // 乗せられない（静的検査 P2・戻り縁が目盛を占める構成）
+        g.lnd.forEach(function (e2) {
+          if (!e2.landOver && typeof e2.landSlot === "number") sl.push(e2.landSlot);
+        });
         gwExits.set(id, sl);
       });
       this.linkItems.forEach(function (it) {
@@ -3330,11 +3335,11 @@ var row = sc.closest(".fc-row");
     // 通路が詰まるとき扇の刻み（fanPitch）を足すと使える幅を超えてクランプで
     // 折り返され、外側の通路が同じ x に潰れる（静的検査 P2-5）。扇は通路ピッチの
     // 半分以内におさめ、通路の並びを保ったまま寄せる
-    // ガターが詰まるとき扇の最低目盛 3px が隣のレーンの通路を食って
-    // 外側レーンと同じ x に潰れる。この領域では扇をピッチの正確な半分へ
-    // 縮める。(レーン, 扇) の組合せの連番が違えば x も違う
-    var fanStep = pitch < 6 ? pitch / fanDiv
-      : Math.min(fanPitch, Math.max(3, pitch / 2 - 1));
+    // 扇の刻みはピッチの域を問わず 1/fanDiv レーンに統一する。6px 境界で
+    // 3px 下限へ切り替えると (0, 最大fan) と (1, 0) が同じ深さに並進して
+    // 並走が戻る（静的検査 P2）。予約式 lc−1+fan/fanDiv と同じ分数なので
+    // 深さ base+(ch+f/fanDiv)・pitch は全域で一意。ピッチ予約も超えない
+    var fanStep = Math.min(fanPitch, pitch / fanDiv);
     var depth = base + ch * pitch + f * fanStep;
 
     // ゲートウェイ同士の前方分岐: 下頂点から上頂点への短い垂直下降。
@@ -3436,6 +3441,12 @@ var row = sc.closest(".fc-row");
         var gxW = sideRightOver === null
           ? Math.max(spanR + base, Math.min(clampW - 14, clampW - 14 + fIdx * 12))
           : Math.max(spanR + base, sideRightOver + 14 + fIdx * 12);
+        if (o.srcGw && o.exitOver) {
+          // 展開中の回り込み trunk も超過出口ぶん刻む。たたみと同じ趣旨で、
+          // eoIdx の順に右列の外側へ並べる（静的検査 P1）。列が無い行は
+          // clampW が壁なので潰れる——宣言済みの物理上限
+          gxW = gxW + (o.eoIdx || 0) * 12;
+        }
         // ひし形の出所は顔スロット登記の下辺刻み。角丸カードは下辺を扇で刻む
         var gsO = o.srcGw ? (o.gslot || 0) : 0;
         var sxO = acx + gsO;
@@ -3448,7 +3459,8 @@ var row = sc.closest(".fc-row");
           // 中心下なら進むほど輪郭が内側へ退くので線は常に外側。刻みごとに
           // x も違うので降り出しの縦線も並走しない
           var bW = Math.min(5, (ah / 2) * 0.25);
-          var stgW = Math.max(2, Math.min(12, ((ah / 2) - 9 - bW) /
+          // 2px 下限を撤去（たたみ側と同じ。静的検査 P2）
+          var stgW = Math.max(0, Math.min(12, Math.max(0, (ah / 2) - 9 - bW) /
             Math.max(1, (o.eoN || 1) - 1)));
           var dyW = bW + (o.eoIdx || 0) * stgW;
           sdy = acy + dyW;
@@ -3576,6 +3588,15 @@ var row = sc.closest(".fc-row");
     var clampR = function (x) { return Math.max(spanR + base, Math.min(outerR, x)); };
     if (o.self) depth = Math.max(4, depth - 8);   // 自分ループは後方通路より外側を回る
     var gx = left ? clampL(spanL - depth) : clampR(spanR + depth);
+    if (o.srcGw && o.exitOver && !up) {
+      // 収容超過で側面頂点発になった縁は通路の割当を持たないまま同じ trunk x に
+      // 集まり、縦区間を共有した（静的検査 P1）。通常のレーンの外側（最深レーン
+      // より深い目盛）へ発の目盛順に刻む。ガター幅が本数を収容できない密集は
+      // clamp で潰れる物理上限
+      var gxOver = base + lc * pitch + laneMaxFan * fanStep +
+        (o.eoIdx || 0) * Math.max(2, Math.min(8, pitch));
+      gx = left ? clampL(spanL - gxOver) : clampR(spanR + gxOver);
+    }
     if (open && !up && ch === 0 && left && !o.self && !o.vert && !o.near) {
       // 通路を持たない回り込みでも展開中はサイド列の外側へ回す。内側ガター
       // （列の 3px 左）は読み取り矢印の着地面（カード縁から矢じりが左に 11px）を
@@ -3619,7 +3640,11 @@ var row = sc.closest(".fc-row");
         // 細くなる輪郭の内側へ潜る（静的検査 P2・ラウンド 12）
         var hhO = ah / 2;
         var bO = Math.min(5, hhO * 0.25);
-        var stgO = Math.max(2, Math.min(12, (hhO - 9 - bO) / Math.max(1, (o.eoN || 1) - 1)));
+        // 2px の下限を撤去した。下限が収容範囲に勝つと始点が下頂点の下＝輪郭の
+        // 外へ外れる。収まらない本数は輪郭上で密集する物理上限として、輪郭上に
+        // 残すことを優先する（静的検査 P2）
+        var stgO = Math.max(0, Math.min(12, Math.max(0, hhO - 9 - bO) /
+          Math.max(1, (o.eoN || 1) - 1)));
         var dyG = bO + (o.eoIdx || 0) * stgO;
         startY = acy + dyG;
         sxStart = acx + (left ? -1 : 1) * (aw / 2) *
@@ -3747,26 +3772,42 @@ var row = sc.closest(".fc-row");
       // 着地はこのカード下辺の出口列を避ける。出口の降り線の上に矢じりを
       // 乗せると出口をふさぐ（静的検査 P2）。退避を矢じり半分身幅ぶん押して、
       // カード幅に収める
-      if (o.dstExit && o.dstExit.length) {
-        // 押し出しは壁反発つき。押した先が半身の境界を外なら壁側へ戻すので、
-        // クランプで出口列の上へ戻されない。回る側の半身に収め、左右の退避着地も
-        // 取り違えない。出口が下辺を埋め尽くす密集（本数×11px ≥ 幅）は
-        // 着地点そのものがない物理上限として最近点に落ちる
-        var loH = left ? bx + 6 : bx + bw * 0.5, hiH = left ? bx + bw * 0.5 : bx + bw - 6;
-        for (var q2 = 0; q2 < 4; q2++) {
-          var moved2 = false;
-          for (var q = 0; q < o.dstExit.length; q++) {
-            var colX = bcx + o.dstExit[q];
-            var dlt = exB - colX;
-            if (Math.abs(dlt) < 12) {
-              var dir = dlt < 0 ? -1 : 1;
-              var nx2 = colX + dir * 12;
-              exB = (nx2 < loH || nx2 > hiH) ? colX - dir * 12 : nx2;
-              moved2 = true;
-            }
+      // 着地はこのカード下辺の出口・戻る縁の着地列と、先に回る退避着地を避ける。
+      // 押し合いだと二つの出口の間を行き来して、他に空き地が残っていても
+      // 12px 未満に座り込む（静的検査 P2）。順に「障害物から 12px 以上空く
+      // 候補のうち初期着地に最も近い点」を選ぶ。全員が同じ連番規則を再現
+      // （replay）するので着地の列は群全体で揃う。出口が下辺を埋め尽くす
+      // 密集（本数×11px ≥ 幅）は着地点そのものがない物理上限として最近点に
+      // 落ちる。回る側の半身に収め、左右の退避着地の取り違えもない
+      var loH = left ? bx + 6 : bx + bw * 0.5, hiH = left ? bx + bw * 0.5 : bx + bw - 6;
+      if ((o.dstExit && o.dstExit.length) || ovN > 1) {
+        var obsX = [];
+        if (o.dstExit) for (var qe = 0; qe < o.dstExit.length; qe++) obsX.push(bcx + o.dstExit[qe]);
+        obsX.sort(function (a, b) { return a - b; });
+        var resX = [];
+        for (var j2 = 0; j2 <= ovI; j2++) {
+          var fr2 = ovN > 1 ? j2 / (ovN - 1) : 0.5;
+          var fx2 = left ? bx + bw * (0.46 - 0.40 * fr2) : bx + bw * (0.54 + 0.4 * fr2);
+          var cands = [fx2];
+          for (var qc = 0; qc < obsX.length; qc++) { cands.push(obsX[qc] - 12); cands.push(obsX[qc] + 12); }
+          for (var qr = 0; qr < resX.length; qr++) { cands.push(resX[qr] - 12); cands.push(resX[qr] + 12); }
+          var best2 = -1e9, bestd = 1e18;
+          for (var ci2 = 0; ci2 < cands.length; ci2++) {
+            var cx2 = cands[ci2];
+            if (cx2 < loH || cx2 > hiH) continue;
+            var ok2 = true;
+            for (var qa = 0; qa < obsX.length; qa++) if (Math.abs(cx2 - obsX[qa]) < 12) { ok2 = false; break; }
+            if (ok2) for (var qb = 0; qb < resX.length; qb++) if (Math.abs(cx2 - resX[qb]) < 12) { ok2 = false; break; }
+            var mind = 1e9;
+            for (var qm = 0; qm < obsX.length; qm++) mind = Math.min(mind, Math.abs(cx2 - obsX[qm]));
+            for (var qn = 0; qn < resX.length; qn++) mind = Math.min(mind, Math.abs(cx2 - resX[qn]));
+            // 空き地なら初期着地との近さ、空き地が無い候補は障害物からの遠さを優先
+            var pen = ok2 ? Math.abs(cx2 - fx2) : 1e6 - mind;
+            if (pen < bestd) { bestd = pen; best2 = cx2; }
           }
-          exB = Math.max(loH, Math.min(hiH, exB));
-          if (!moved2) break;
+          var xx2 = best2 > -1e8 ? best2 : Math.max(loH, Math.min(hiH, fx2));
+          resX.push(xx2);
+          if (j2 === ovI) exB = xx2;
         }
       }
       // 段の間隔は曲線の立ち上がり幅（krB ≤ 34）より広くする。5px だと隣の段の
