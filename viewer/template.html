@@ -2022,12 +2022,18 @@ var row = sc.closest(".fc-row");
         win0 = sr.top - box.top - 160;
         win1 = sr.bottom - box.top + 160;
       }
+      // 全レーン重畳監査（out/overlap-audit.mjs）の期待縁数。サイド列の内スクロールで
+      // カードが画面外のため意図的に描かない縁（it.d が null）は期待に数えない
+      var drawable = [];
+      for (var di = 0; di < items.length; di++) if (items[di].d) drawable.push(di);
+      svg.setAttribute("data-expected", String(drawable.length));
+      svg.setAttribute("data-expected-eids", drawable.join(","));
       var skipped = 0;
       var labels = [];
       // 縁の終端（矢印）のまわりはラベルを置かない場所として覚える。矢印の先がラベルに
       // 隠れると「どの縁がどこへ行くのか」が読めなくなる
       var arrows = [];
-      items.forEach(function (it) {
+      items.forEach(function (it, ii) {
         if (!it.d) return;
         var k = it.edge.kind;
         if (it.loop) k = "loop";
@@ -2039,6 +2045,8 @@ var row = sc.closest(".fc-row");
         path.setAttribute("class", "edge " + k + ((it.edge.provenance === "llm" || it.edge.provenance === "human") ? " dash" : "") +
           (related ? " hl" : (ioSel ? " dimmed" : "")));
         path.setAttribute("marker-end", "url(#mk-" + k + ")");
+        // 描画順でなく縁の index を入れる（画面外スキップでずれない安定 ID。監査用）
+        path.setAttribute("data-eid", String(ii));
         path.setAttribute("data-tan", Math.round(it.tan));
         path.setAttribute("data-face", it.face || "");
         // vertex=頂点直結 / loop=左頂点から出て戻る（自分ループ・後方縁） / gutter=側面通路
