@@ -2212,3 +2212,150 @@ test("ローカル注釈をクリアするとグラフが埋め込みデータ�
     assert.ok(shots.includes(need), "必須のスクリーンショットが無い: " + need);
   }
 });
+
+
+// ============================================================
+//  回帰検査 ①〜④：線重畳ゼロへ直す過程で修正した 4 点の固定
+//  それぞれ対応する修正を戻すと落ちる（根因が別々のため個別に持つ）。
+// ============================================================
+
+// synth の graph を out/synth に描いて開く（テンプレの現行挙動を見る）
+function renderSynth(name, graph) {
+  const dir = join(OUT, "synth");
+  mkdirSync(dir, { recursive: true });
+  const json = join(dir, name + ".json");
+  const html = join(dir, name + ".html");
+  writeFileSync(json, JSON.stringify(graph, null, 1));
+  const r = spawnSync(process.execPath,
+    [join(ROOT, "bin", "render.mjs"), "--graph", json, "--out", html, "--title", name], { encoding: "utf8" });
+  assert.equal(r.status, 0, name + " の描画に失敗: " + r.stderr);
+  return html;
+}
+
+// 縁の終端 10px が条件ラベルの矩形に入っている本数（3px 以上の重なりを hit と数える）
+async function arrowLabelHits(p, edgeSel) {
+  return p.evaluate((sel) => {
+    const rects = Array.prototype.map.call(
+      document.querySelectorAll("#flow-edge-labels text"),
+      (t) => {
+        const r = t.getBoundingClientRect();
+        return { x: r.left, y: r.top, w: r.width, h: r.height };
+      }).filter((r) => r.w > 1);
+    const bad = [];
+    Array.prototype.forEach.call(document.querySelectorAll(sel), (el) => {
+      const L = el.getTotalLength();
+      let n = 0;
+      for (let i = Math.max(0, L - 10); i <= L; i += 2) {
+        const q = el.getPointAtLength(i).matrixTransform(el.getScreenCTM());
+        if (rects.some((r) => q.x >= r.x && q.x <= r.x + r.w && q.y >= r.y && q.y <= r.y + r.h)) n++;
+      }
+      if (n >= 3) bad.push(el.getAttribute("data-edge") + " (" + n + ")");
+    });
+    return bad;
+  }, edgeSel);
+}
+
+// ②のフィクスチャ：API の向こうの格納先（.sub-wrap の中）を積んだ列が
+// 折り返し対象になるかを見る。c1 の右列は直接カード 3 枚＋サブカード 2 枚。
+function ioWrapGraph() {
+  const nodes = [{ id: "flow:io", kind: "flow", name: "折り返し判定検査", metadata: { provenance: "definition" } }];
+  const edges = [{ source: "flow:io", target: "flow:io", kind: "contains" }];
+  nodes.push({ id: "step:io/c1", kind: "step", parent: "flow:io", name: "1. 前処理", metadata: { order: 1, provenance: "definition" } });
+  nodes.push({ id: "step:io/c2", kind: "step", parent: "flow:io", name: "2. 後処理", metadata: { order: 2, provenance: "definition" } });
+  nodes.push({ id: "boundary:http/io-api/run", kind: "boundary", name: "io-api/run", metadata: { boundaryKind: "http", provenance: "definition" } });
+  ["a", "b"].forEach((s) => nodes.push({ id: "store:io/own-" + s, kind: "store", name: "own_" + s, metadata: { storeKind: "table", provenance: "definition" } }));
+  ["x", "y"].forEach((s) => nodes.push({ id: "store:io/be-" + s, kind: "store", name: "be_" + s, metadata: { storeKind: "table", provenance: "definition" } }));
+  ["step:io/c1", "step:io/c2"].forEach((id, i) => edges.push({ source: "flow:io", target: id, kind: "contains", metadata: { order: i + 1 } }));
+  edges.push({ source: "step:io/c1", target: "step:io/c2", kind: "next", provenance: "definition", metadata: { order: 2 } });
+  ["a", "b"].forEach((s) => edges.push({ source: "step:io/c1", target: "store:io/own-" + s, kind: "writes", provenance: "definition", metadata: { access: "write" } }));
+  edges.push({ source: "step:io/c1", target: "boundary:http/io-api/run", kind: "invokes", provenance: "definition" });
+  ["x", "y"].forEach((s) => edges.push({ source: "boundary:http/io-api/run", target: "store:io/be-" + s, kind: "writes", provenance: "definition", metadata: { access: "write" } }));
+  return { schemaVersion: 1, generatedAt: "2026-01-01T00:00:00Z", root: "flow:io", warnings: [], nodes, edges };
+}
+
+test("回帰①: 全展開で戻る縁は通路を共有せず別々の縦線へ刻まれる", async () => {
+  // open の戻る縁が 1 本に潰れる不具合（up の宣言順バグ）の再発防止。
+  const { ctx, p } = await openStress(1440);
+  await p.click("#btn-expand-all");
+  await p.waitForTimeout(1400);
+  const a = await backLaneAudit(p);
+  assert.ok(a.lanes >= 3, "全展開の戻る縁通路が少なすぎる（検査が空振り）: " + a.lanes);
+  assert.ok(a.distinct >= 3, "全展開で戻る縁が同じ縦線に潰れている（通路分離が効いていない）: distinct=" + a.distinct + " / lanes=" + a.lanes);
+  assert.deepEqual(a.bad, [], "行区間が重なる戻る縁が同じ縦線を共有（全展開）: " + a.bad.slice(0, 3).join(" / "));
+  await p.close();
+  await ctx.close();
+});
+
+test("回帰②: API のサブカード込みでサイド列が折り返し対象になり縁が消えない", async () => {
+  const html = renderSynth("iowrap-synth", ioWrapGraph());
+  const p = await openFile(html, "#view=flow");
+  await p.waitForSelector(".step-box");
+  await p.click("#btn-expand-all");
+  await p.waitForTimeout(600);
+  const st = await p.evaluate(() => {
+    const col = document.querySelector('.fc-side.right[data-for="step:io/c1"]');
+    return {
+      exists: !!col,
+      multi: col ? col.classList.contains("multi") : null,
+      nested: col ? col.querySelectorAll(".sub-wrap > .sub-card").length : -1,
+      drawn: Array.prototype.filter.call(
+        document.querySelectorAll('path.edge[data-edge^="boundary:http/io-api/run|writes|"]'),
+        (e) => (e.getAttribute("d") || "").length > 1).length,
+    };
+  });
+  assert.equal(st.exists, true, "c1 の右サイド列が無い（フィクスチャ不備）");
+  assert.ok(st.nested >= 2, "API のサブカードが積まれていない: " + st.nested);
+  // サブカードを折り返し判定に数えないと直接カード 3 枚だけと数えて multi が付かず、
+  // 列が縦に伸びてサブカードがスクロールで隠れる（＝その縁が描けない）原因になる。
+  assert.equal(st.multi, true, "サブカードを数えず折り返しが掛からない（列が multi にならない）");
+  assert.ok(st.drawn >= 1, "サブカードへの書き込み縁が 1 本も描画されていない: " + st.drawn);
+  await p.close();
+});
+
+// ③のフィクスチャ：ゲートウェイ同士で同じ頂点へ集まる 2 条件
+function gwFanGraph() {
+  const nodes = [{ id: "flow:gw", kind: "flow", name: "頂点扇検査", metadata: { provenance: "definition" } }];
+  const edges = [{ source: "flow:gw", target: "flow:gw", kind: "contains" }];
+  const gw = (id, name, order) => nodes.push({ id: "step:gw/" + id, kind: "step", parent: "flow:gw", name, metadata: { stepKind: "gateway", order, provenance: "definition" } });
+  gw("a", "振り分け", 1);
+  gw("b", "合流", 2);
+  nodes.push({ id: "step:gw/c", kind: "step", parent: "flow:gw", name: "後続", metadata: { order: 3, provenance: "definition" } });
+  ["a", "b", "c"].forEach((id, i) => edges.push({ source: "flow:gw", target: "step:gw/" + id, kind: "contains", metadata: { order: i + 1 } }));
+  edges.push({ source: "step:gw/a", target: "step:gw/b", kind: "next", provenance: "definition", metadata: { order: 1, label: "条件甲" } });
+  edges.push({ source: "step:gw/a", target: "step:gw/b", kind: "next", provenance: "definition", metadata: { order: 1, label: "条件乙" } });
+  edges.push({ source: "step:gw/b", target: "step:gw/c", kind: "next", provenance: "definition", metadata: { order: 2 } });
+  return { schemaVersion: 1, generatedAt: "2026-01-01T00:00:00Z", root: "flow:gw", warnings: [], nodes, edges };
+}
+
+test("回帰③: ゲートウェイ同士の同頂点 2 条件は頂点を刻みラベルが隣の矢印に刺さらない", async () => {
+  const html = renderSynth("gwfan-synth", gwFanGraph());
+  const p = await openFile(html, "#view=flow");
+  await p.waitForSelector(".step-box");
+  await p.waitForTimeout(300);
+  const sel = '#flow-edges path.edge[data-edge="step:gw/a|next|step:gw/b"]';
+  const count = await p.locator(sel).count();
+  assert.ok(count >= 2, "ゲートウェイ同士の同宛先縁が " + count + " 本しかない");
+  assert.deepEqual(await arrowLabelHits(p, sel), [], "条件ラベルが隣の頂点縁の矢印に刺さっている");
+  await p.close();
+});
+
+// ④のフィクスチャ：隣接行への前方縁（直下げ）に条件ラベルを付ける
+function nearLabelGraph() {
+  const nodes = [{ id: "flow:nr", kind: "flow", name: "隣接縁ラベル検査", metadata: { provenance: "definition" } }];
+  const edges = [{ source: "flow:nr", target: "flow:nr", kind: "contains" }];
+  ["p", "q"].forEach((id, i) => nodes.push({ id: "step:nr/" + id, kind: "step", parent: "flow:nr", name: (i + 1) + ". 処理", metadata: { order: i + 1, provenance: "definition" } }));
+  ["p", "q"].forEach((id, i) => edges.push({ source: "flow:nr", target: "step:nr/" + id, kind: "contains", metadata: { order: i + 1 } }));
+  edges.push({ source: "step:nr/p", target: "step:nr/q", kind: "next", provenance: "definition", metadata: { order: 2, label: "正常系" } });
+  return { schemaVersion: 1, generatedAt: "2026-01-01T00:00:00Z", root: "flow:nr", warnings: [], nodes, edges };
+}
+
+test("回帰④: 隣接行の直下げ縁で条件ラベルが自分の終端矢印に乗らない", async () => {
+  const html = renderSynth("near-synth", nearLabelGraph());
+  const p = await openFile(html, "#view=flow");
+  await p.waitForSelector(".step-box");
+  await p.waitForTimeout(300);
+  const sel = '#flow-edges path.edge[data-edge="step:nr/p|next|step:nr/q"]';
+  assert.equal(await p.locator(sel).count(), 1, "隣接行の前方縁が描かれない");
+  assert.deepEqual(await arrowLabelHits(p, sel), [], "直下げ縁のラベルが自分の終端矢印に乗っている");
+  await p.close();
+});
