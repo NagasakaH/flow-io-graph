@@ -5,7 +5,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "sync:skill": "node bin/sync-skill.mjs"
   },
   "license": "ISC",
   "devDependencies": {

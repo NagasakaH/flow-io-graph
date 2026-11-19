@@ -91,3 +91,11 @@ node --test          # 全テスト
   （差分レビューができる）
 - **実行環境は Node のみ。** ビルドもビューアも依存ゼロ（ビューアは CDN 不使用の単一ファイル、
   `file://` で開ける）
+
+## Agent Skill として配布・利用する
+
+[skills/flow-io-graph/](skills/flow-io-graph/) に自己完結型の Agent Skill パッケージを同梱しています（`npm install` 不要、Node.js のみで動作）。
+
+- **インストール例**: `skills/flow-io-graph/` を対象リポジトリの `.agents/skills/flow-io-graph/` または `~/.gemini/config/skills/flow-io-graph/` へコピーするだけ。
+- **スキル側の運用**: エージェントは `scripts/` 配下の `.mjs` をブラックボックスとして扱い、`node scripts/build.mjs --help` の確認と実行のみで任意のリポジトリから `flow.html` を生成できます。
+- **本体更新時の同期**: `bin/`, `lib/`, `viewer/template.html`, `docs/schema.md` を更新したら `npm run sync:skill` でスキル側へ反映します。

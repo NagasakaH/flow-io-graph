@@ -124,16 +124,23 @@ test("フロー図の既定はたたんだフローチャート（ボックス�
   const order = await page.locator("#flow-chart .step-box .nm").allInnerTexts();
   assert.deepEqual(order, ["注文受信", "決済結果", "再試行判定", "決済確定", "購入者通知"],
     "next の順（contains の order）が崩れている");
-  // ▼ は線形 next の間だけ: gate-result -> retry-gate は分岐縁なので ▼ を置かない
+  // ▼ は線形 next の間だけ: gate-result -> retry-gate は分岐縁なので ▼ を置かない。
+  // Round 5b: retry-gate は gate-result 行の右横（.fc-side.branch-side）に置くので
+  // レーン行としては現れない（dataset.row は主幹のステップだけ）
   assert.deepEqual(await laneSeq(page),
-    ["開始", "▼", "receive", "▼", "gate-result", "retry-gate", "charge", "▼", "notify", "▼", "終了"],
+    ["開始", "▼", "receive", "▼", "gate-result", "charge", "▼", "notify", "▼", "終了"],
     "▼ と開始／終了の位置が next 縁と合っていない");
   // 線形 next の ▼ 2 本 + 開始・終了の目印の矢印 2 本
   assert.equal(await page.locator("#flow-chart .fc-arrow").count(), 4, "▼ 矢印の本数が違う");
   assert.deepEqual(await page.locator("#flow-chart .fc-term-row .term").allInnerTexts(), ["開始", "終了"],
     "フローの先頭・末尾の目印が無い");
-  // 既定は左右の格納先カラムを出さない（3 列常時表示はやめた）
-  assert.equal(await page.locator("#flow-chart .fc-side .fnode").count(), 0, "既定でサイドカードが出ている");
+  // 既定は左右の格納先カラムを出さない（3 列常時表示はやめた）。
+  // ただし gate-result 行の右横に例外ステップ（再試行判定）が 1 個出る
+  assert.equal(await page.locator("#flow-chart .fc-side:not(.branch-side) .fnode").count(), 0, "既定でサイドカードが出ている");
+  const brSide = page.locator('#flow-chart .fc-side.right.branch-side[data-for="step:order-intake/gate-result"]');
+  assert.equal(await brSide.count(), 1, "ゲートウェイの右横にサイドブランチ行が無い");
+  const brTxt = await brSide.innerText();
+  assert.match(brTxt, /再試行判定/, "サイドブランチに例外ステップの名前が無い: " + brTxt);
   // 分岐・ループの縁は展開と無関係に常時描く
   assert.equal(await page.locator("#flow-edges path.edge.reads, #flow-edges path.edge.writes, #flow-edges path.edge.invokes").count(), 0,
     "たたんだ状態に I/O 縁が描かれている");
@@ -180,31 +187,35 @@ test("分岐ノード（gateway）はひし形で描き、条件ラベルを縁�
   await page.screenshot({ path: join(SHOTS, "01e-gateway.png") });
 });
 
-test("前方向ループ（metadata.loop）は左頂点から出て左ガターを回り、行き先の下辺へ上向きに戻る", async () => {
+test("前方向ループ（metadata.loop）はサイドブランチの上頂点から出て上へ進み、主幹の右辺へ左向きに戻る", async () => {
   const SRC = "step:order-intake/retry-gate";
   const loopPath = page.locator('#flow-edges path.edge.loop[data-edge="step:order-intake/retry-gate|next|step:order-intake/receive"]');
   assert.equal(await loopPath.count(), 1, "retry-gate → receive のループ縁が描画されない");
   const d = await loopPath.getAttribute("d");
   const n = d.match(/[-\d.]+/g).map(Number);
-  // M 出所 C 制御 .. .. 折れ L ガター走行 .. C .. .. 進入前 L 終点
   const [x1, y1] = n;
-  const [gx, gy] = n.slice(6, 8);
   const [x3, y3, x2, y2] = n.slice(-4);
   assert.equal(await loopPath.getAttribute("data-route"), "loop", "ループ縁の経路種別が違う");
   assert.ok(y2 < y1 - 40, "ループ縁が前方向に戻っていない: " + d);
-  assert.ok(gx < Math.min(x1, x2) - 6, "ループ縁がレーン左側を回っていない: " + d);
-  // 出口は出所の「左頂点」（前方分岐は下頂点）。折れの直前まで真横に走る
-  const anchor = await page.evaluate((id) => {
+  // 出口は出所の「上頂点」: 真上へ立ち上がる（折れで角丸左折して主幹の行まで上がる）
+  const geo = await page.evaluate((id) => {
     const lane = document.querySelector("#flow-chart").getBoundingClientRect();
-    const r = document.querySelector('.step-box[data-node="' + id + '"]').getBoundingClientRect();
-    return { left: r.left - lane.left, cy: (r.top + r.bottom) / 2 - lane.top };
+    const g = document.querySelector('.step-box[data-node="' + id + '"]').getBoundingClientRect();
+    const r = document.querySelector('.step-box[data-node="step:order-intake/receive"]').getBoundingClientRect();
+    return {
+      cx: (g.left + g.right) / 2 - lane.left, top: g.top - lane.top,
+      dstRight: r.right - lane.left, dstCy: (r.top + r.bottom) / 2 - lane.top,
+    };
   }, SRC);
-  assert.ok(Math.abs(x1 - anchor.left) <= 2, "ループ縁が左頂点から出ていない: " + d);
-  assert.ok(Math.abs(y1 - anchor.cy) <= 2, "ループ縁の出口がひし形の左頂点の高さに無い: " + d);
-  assert.ok(Math.abs(n[3] - y1) < 0.01, "左頂点から真横に出ている（折れが角丸）: " + d);
-  assert.ok(Math.abs(n[8] - gx) < 0.01, "ガターが縦一直線になっていない: " + d);
-  assert.ok(x3 === x2 && y3 > y2 + 6, "ループ縁が行き先の下辺へ上向きに届いていない: " + d);
-  assert.equal(await loopPath.getAttribute("data-face"), "up", "ループ縁の入り方向が違う");
+  assert.ok(Math.abs(x1 - geo.cx) <= 4, "ループ縁が上頂点（中央）から出ていない: " + d);
+  assert.ok(Math.abs(y1 - geo.top) <= 4, "ループ縁の出口がひし形の上頂点に無い: " + d);
+  assert.ok(Math.abs(n[2] - x1) < 0.01, "上頂点から真上へ出ていない（折れが角丸）: " + d);
+  // 進入は行き先の「右辺中央」に左向き。終端区間は水平直線で左向き（face: left）
+  assert.ok(Math.abs(y3 - y2) < 0.01, "終端が水平直線ではない: " + d);
+  assert.ok(x2 < x3 - 6, "右辺へ左向きに進入していない（x 減少）: " + d);
+  assert.ok(Math.abs(x2 - geo.dstRight) <= 4, "ループ縁が注文受信の右辺に届いていない: " + d);
+  assert.ok(Math.abs(y2 - geo.dstCy) <= 4, "ループ縁の進入が右辺中央の高さに無い: " + d);
+  assert.equal(await loopPath.getAttribute("data-face"), "left", "ループ縁の入り方向が違う: " + d);
   const labels = await page.locator("#flow-edge-labels text.loop").evaluateAll((ts) => ts.map((t) => t.textContent.trim()));
   assert.equal(labels.length, 1, "ループのラベルが無い: " + JSON.stringify(labels));
   assert.match(labels[0], /↺/, "ループラベルに ↺ が無い: " + labels[0]);
@@ -309,7 +320,7 @@ test("ステップをクリックすると入出力が展開され、もう一�
   await box.click();
   await page.waitForTimeout(150);
   assert.equal(await box.getAttribute("data-expanded"), "false");
-  assert.equal(await page.locator("#flow-chart .fc-side .fnode").count(), 0, "たたんでもサイドカードが残っている");
+  assert.equal(await page.locator("#flow-chart .fc-side:not(.branch-side) .fnode").count(), 0, "たたんでもサイドカードが残っている");
   assert.equal(await page.locator("#flow-edges path.edge.reads, #flow-edges path.edge.writes, #flow-edges path.edge.invokes").count(), 0,
     "たたんでも I/O 縁が残っている");
   assert.equal(await page.locator("#flow-edges path.edge.next, #flow-edges path.edge.loop").count(), 4,
@@ -336,7 +347,7 @@ test("全展開 / 全たたむ と展開状態の hash 復元（共有 URL に�
   await page.click("#btn-collapse-all");
   await page.waitForTimeout(200);
   assert.equal(await page.locator('#flow-chart .step-box[data-expanded="true"]').count(), 0, "全たたむが効いていない");
-  assert.equal(await page.locator("#flow-chart .fc-side .fnode").count(), 0);
+  assert.equal(await page.locator("#flow-chart .fc-side:not(.branch-side) .fnode").count(), 0);
   assert.equal(await page.locator("#flow-edges path.edge").count(), 4, "たたんでも分岐・ループ縁は残るはず");
   // gateway の id を含めて expanded を復元する
   const ids = "step:order-intake/gate-result,step:order-intake/receive,step:order-intake/retry-gate";
@@ -923,47 +934,77 @@ function checkClashOnly(rep, tag) {
 function checkFlowGeom(rep, tag) {
   assert.equal(rep.gws.length, 2, tag + ": 分岐ノードが 2 つ描画されていない");
   assert.equal(rep.paths.length, 4, tag + ": 分岐・ループ縁の本数が違う: " + rep.paths.map((p) => p.edge).join(" / "));
+  // たたみ時は主幹一直線＋右サイドブランチ（spineDrop 縁が現れる）、展開時は縦 1 列
+  const sideMode = rep.paths.some((p) => p.route === "spine");
   // 1) ひし形のシルエット上を走る縁は無し（自ノードの頂点接続だけ許す）
   for (const p of rep.paths) {
     assert.deepEqual(p.bad, [], tag + ": 縁がひし形の中を横切っている: " + p.edge + " → " + p.bad.join(", "));
   }
-  // 2) 出所はループ／後ろ向き縁なら左頂点、前方分岐はひし形の下辺に沿って刻む
-  //    （頂点の共有をやめた。同じひし形から出る縁同士は始点が 10px 以上離れ、
+  // 2) 出所はループ／後ろ向き縁なら左頂点、前方分岐はひし形の下辺に沿って刻むか、
+  //    左右の頂点から出る（右頂点発の前方分岐: 2. 決済結果 → 成功 など。頂点の
+  //    共有はやめた。同じひし形から出る縁同士は始点が 10px 以上離れ、
   //    どの線がどこから出たか辿れること）
   const gwStarts = new Map();
   for (const p of rep.paths) {
     const src = rep.gws.find((d) => d.node === p.edge.split("|")[0]);
     if (!src) continue;
     if (p.route === "loop") {
+      if (sideMode) {
+        // サイドブランチ配置: ループは再試行判定の「上頂点」から真上へ出て左へ戻る
+        assert.ok(Math.abs(p.start.x - src.cx) < 4, tag + ": サイドループが上頂点から出ていない（x）: " + p.edge);
+        assert.ok(Math.abs(p.start.y - src.y0) < 4, tag + ": サイドループが上頂点から出ていない（y）: " + p.edge);
+        continue;
+      }
       assert.ok(Math.abs(p.start.x - src.x0) < 4, tag + ": 左頂点から出ていない（x）: " + p.edge);
       assert.ok(Math.abs(p.start.y - src.cy) < 4, tag + ": 左頂点から出ていない（y）: " + p.edge);
       continue;
     }
     const hw = (src.x1 - src.x0) / 2, hh = (src.y1 - src.y0) / 2;
     const off = Math.abs(Math.abs(p.start.x - src.cx) / hw + (p.start.y - src.cy) / hh - 1);
-    assert.ok(off < 0.08, tag + ": 前方分岐縁の出所がひし形の下辺上にない: " + p.edge + " 差=" + off.toFixed(2));
-    assert.ok(Math.abs(p.start.x - src.cx) <= hw * 0.6, tag + ": 出所が下頂点から離れすぎ: " + p.edge);
+    const onBottom = off < 0.08 && Math.abs(p.start.x - src.cx) <= hw * 0.6;
+    const onRightV = Math.abs(p.start.x - src.x1) < 4 && Math.abs(p.start.y - src.cy) < 4;
+    const onLeftV = Math.abs(p.start.x - src.x0) < 4 && Math.abs(p.start.y - src.cy) < 4;
+    assert.ok(onBottom || onRightV || onLeftV,
+      tag + ": 前方分岐縁の出所がひし形の下辺・左右頂点のいずれにもない: " + p.edge + " 差=" + off.toFixed(2));
     const seen = gwStarts.get(src.node) || [];
     for (const q of seen) {
-      assert.ok(Math.abs(q.x - p.start.x) >= 10,
+      assert.ok(Math.hypot(q.x - p.start.x, q.y - p.start.y) >= 10,
         tag + ": 同じゲートウェイの出口が重なっている: " + p.edge);
     }
     seen.push(p.start); gwStarts.set(src.node, seen);
   }
-  // 3) ゲートウェイ間の「失敗」は頂点から頂点への垂直下降（水平成分 20% 未満）
+  // 3) ゲートウェイ間の「失敗」は頂点から頂点へ。たたみ時は右頂点→左頂点の水平直結、
+  //    展開時は同じ列の垂直下降（水平成分 20% 未満）。たたみ時はさらに、
+  //    成功（gate-result → charge）が下頂点→上辺中央の垂直下降であること
   const fail = rep.paths.find((p) => p.edge === "step:order-intake/gate-result|next|step:order-intake/retry-gate");
   assert.ok(fail, tag + ": 失敗縁が無い");
-  assert.equal(fail.route, "vertex", tag + ": 失敗縁が頂点直結になっていない");
-  assert.ok(fail.hspan / fail.len < 0.2,
-    tag + ": 失敗縁の水平成分が大きすぎる: " + fail.hspan.toFixed(1) + "/" + fail.len.toFixed(1));
   const dst = rep.gws.find((d) => d.node === "step:order-intake/retry-gate");
-  {
-    const hw = (dst.x1 - dst.x0) / 2, hh = (dst.y1 - dst.y0) / 2;
-    const off = Math.abs(Math.abs(fail.end.x - dst.cx) / hw - (fail.end.y - dst.cy) / hh - 1);
-    assert.ok(off < 0.08, tag + ": 失敗縁の終端が再試行判定の上辺上にない: 差=" + off.toFixed(2));
-    assert.ok(Math.abs(fail.end.x - dst.cx) <= hw * 0.6, tag + ": 失敗縁の終端が上頂点から離れすぎ");
-    assert.ok(Math.abs(fail.end.x - fail.start.x) < 2,
-      tag + ": 失敗縁が同じ列の垂直下降になっていない: " + JSON.stringify([fail.start, fail.end]));
+  if (sideMode) {
+    const g2 = rep.gws.find((d) => d.node === "step:order-intake/gate-result");
+    assert.equal(fail.route, "side", tag + ": 失敗縁がサイドの水平直結になっていない");
+    assert.ok(Math.abs(fail.start.x - g2.x1) < 4 && Math.abs(fail.start.y - g2.cy) < 4,
+      tag + ": 失敗縁が主幹ゲートウェイの右頂点から出ていない: " + JSON.stringify([fail.start, fail.end]));
+    assert.ok(Math.abs(fail.end.x - dst.x0) < 4 && Math.abs(fail.end.y - dst.cy) < 4,
+      tag + ": 失敗縁が再試行判定の左頂点に入っていない: " + JSON.stringify([fail.start, fail.end]));
+    assert.ok(Math.abs(fail.end.y - fail.start.y) < 2, tag + ": 失敗縁が水平一直線ではない");
+    const ok = rep.paths.find((p) => p.edge === "step:order-intake/gate-result|next|step:order-intake/charge");
+    assert.ok(ok && ok.route === "spine", tag + ": 成功縁が主幹の垂直下降（spine）になっていない");
+    assert.ok(ok.hspan / ok.len < 0.2,
+      tag + ": 成功縁の水平成分が大きすぎる（一直線ではない）: " + ok.hspan.toFixed(1) + "/" + ok.len.toFixed(1));
+    assert.ok(Math.abs(ok.start.x - g2.cx) < 4 && Math.abs(ok.start.y - g2.y1) < 4,
+      tag + ": 成功縁が下頂点から出ていない: " + JSON.stringify([ok.start, ok.end]));
+  } else {
+    assert.equal(fail.route, "vertex", tag + ": 失敗縁が頂点直結になっていない");
+    assert.ok(fail.hspan / fail.len < 0.2,
+      tag + ": 失敗縁の水平成分が大きすぎる: " + fail.hspan.toFixed(1) + "/" + fail.len.toFixed(1));
+    {
+      const hw = (dst.x1 - dst.x0) / 2, hh = (dst.y1 - dst.y0) / 2;
+      const off = Math.abs(Math.abs(fail.end.x - dst.cx) / hw - (fail.end.y - dst.cy) / hh - 1);
+      assert.ok(off < 0.08, tag + ": 失敗縁の終端が再試行判定の上辺上にない: 差=" + off.toFixed(2));
+      assert.ok(Math.abs(fail.end.x - dst.cx) <= hw * 0.6, tag + ": 失敗縁の終端が上頂点から離れすぎ");
+      assert.ok(Math.abs(fail.end.x - fail.start.x) < 2,
+        tag + ": 失敗縁が同じ列の垂直下降になっていない: " + JSON.stringify([fail.start, fail.end]));
+    }
   }
   // 4) 縁ラベルは ⓘ ともひし形の輪郭とも重ならない
   for (const L of rep.labels) {
