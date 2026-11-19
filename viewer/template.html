@@ -1496,7 +1496,6 @@ html[data-theme="light"] {
       this.linkItems = [];
       var idx = this.stepIdx || new Map();
       var fan = new Map(); // 同じ出所の縁を刻む（ガター深さと進入点をずらす）
-      var vfan = new Map(); // 頂点直結（ひし形同士）を刻む。同じ頂点に重ねない
       boxes.forEach(function (fromEl, id) {
         outsOf(id).forEach(function (e) {
           var toEl = boxes.get(e.target);
@@ -1518,24 +1517,48 @@ html[data-theme="light"] {
           var loop = !!md.loop || isSelf;  // 赤い ↺ 縁として描くか
           // ゲートウェイ同士の前方分岐は頂点から頂点への直結（ひし形の辺を横切らないため）
           var vert = srcGw && dstGw && !loop && !back;
-          var k = 0, vk = 0;
-          if (vert) {
-            var vkKey = id + "|" + e.target;
-            vk = vfan.get(vkKey) || 0;   // 同宛先の条件違いは頂点を左右に刻む
-            vfan.set(vkKey, vk + 1);
-          } else {
-            k = fan.get(id) || 0;
-            fan.set(id, k + 1);
-          }
+          var k = 0;
+          if (!vert) { k = fan.get(id) || 0; fan.set(id, k + 1); }
           // 下頂点から扇を出す分、次の行との間隔を広げる（左頂点から出る縁は下らないので据え置き）
           if (!back) fromEl.classList.add("fan-gap");
           self.linkItems.push({
             link: true, edge: e, fromEl: fromEl, toEl: toEl,
             loop: loop, back: back, self: isSelf, near: near, label: md.label || "",
             fan: k, side: back ? "left" : "right", chan: 0,
-            srcGw: srcGw, dstGw: dstGw, vert: vert, vfan: vk,
+            srcGw: srcGw, dstGw: dstGw, vert: vert,
           });
         });
+      });
+      // ひし形の下辺に集まる係留を分散する。出口も戻り縁の進入も以前は下頂点の
+      // 一点に集中し、複数の矢印が同じ点から出て同じ点へ入っていた（どの線が
+      // どの縁か出所で辿れない）。ひし形の輪郭（下辺）に沿って等間隔に刻み、
+      // 出口を内側の目盛へ、戻り縁の進入を外側の目盛へ配る（進入列が出口の降り線
+      // をまたがない並び）。ループ縁は左頂点を使うので対象外。
+      var gface = new Map();
+      this.linkItems.forEach(function (it) {
+        if (it.srcGw && !it.loop && !it.self) {
+          var g0 = gface.get(it.edge.source) || { out: [], lnd: [] };
+          g0.out.push(it); gface.set(it.edge.source, g0);
+        }
+        if (it.dstGw && it.back && !it.vert) {
+          var g1 = gface.get(it.edge.target) || { out: [], lnd: [] };
+          g1.lnd.push(it); gface.set(it.edge.target, g1);
+        }
+      });
+      gface.forEach(function (g) {
+        var m = g.out.length + g.lnd.length;
+        if (!m) return;
+        var elW = (g.out.length ? g.out[0].fromEl : g.lnd[0].toEl).offsetWidth || 300;
+        var step = m > 1 ? Math.min(40, Math.max(12, (elW - 16) / (m - 1))) : 0;
+        var idxs = [];
+        for (var gi = 0; gi < m; gi++) idxs.push(gi);
+        idxs.sort(function (a, b) {
+          return Math.abs(a - (m - 1) / 2) - Math.abs(b - (m - 1) / 2) || a - b;
+        });
+        var pick = idxs.slice(0, g.out.length).sort(function (a, b) { return a - b; });
+        var rest = idxs.slice(g.out.length).sort(function (a, b) { return a - b; });
+        g.out.forEach(function (it, i2) { it.gslot = (pick[i2] - (m - 1) / 2) * step; });
+        g.lnd.forEach(function (it, i2) { it.landSlot = (rest[i2] - (m - 1) / 2) * step; });
       });
       // 同じ側で絡み合う（s < s' < t < t' のように区間が交差する）2 本は平面に描けないので、
       // 下の行から出る縁を反対側へ回す。
@@ -2133,7 +2156,7 @@ var row = sc.closest(".fc-row");
               loop: it.loop, self: it.self, side: it.side, up: !!it.back, chan: it.chan,
               chanBack: it.chanBack || 0, chanFwd: it.chanFwd || 0, fan: it.fan,
               laneUsed: !!it.laneUsed,
-              srcGw: it.srcGw, dstGw: it.dstGw, vert: it.vert, vfan: it.vfan, gBase: sideGap,
+              srcGw: it.srcGw, dstGw: it.dstGw, vert: it.vert, gslot: it.gslot || 0, landSlot: it.landSlot || 0, gBase: sideGap,
               near: it.near, srcRowB: rowBotOf(it.fromEl), dstRowB: rowBotOf(it.toEl),
               srcRow: it.fromEl && it.fromEl.closest ? it.fromEl.closest(".fc-row") : null,
               arr: it.arr || 0, arrCount: it.arrCount || 0, outCount: it.outCount || 0,
@@ -3115,32 +3138,19 @@ var row = sc.closest(".fc-row");
     // ゲートウェイ同士の前方分岐: 下頂点から上頂点への短い垂直下降。
     // 同じ頂点に複数集まると 1 本に潰えて別条件が見えないので、辺に沿って左右へ刻む。
     if (o.vert) {
-      var vf = o.vfan || 0;
-      // ラベルは終端の x から start 寄せ（右へ約 30px）伸びる。刻みが狭いと隣の頂点縁の
-      // descent をラベルが跨いで刺さる（合成検査 s2→s3 の「経路B」）。ラベル幅＋余白より
-      // 広く刻んで、隣の矢印柱をラベルの手前で切らせる。
-      var half = 40;
-      var sx = (vf % 2 ? -1 : 1) * Math.ceil(vf / 2) * half;   // 0, +16, -16, +32, ...
-      var dv = Math.max(9, Math.min(30, (bt - ab) * 0.4));
-      var ax2 = acx + sx, bx2 = bcx + sx;
-      // ひし形の辺に沿ってずらす（頂点から水平に離れる分、上下頂点へ寄せる）
-      var ay = ab - Math.min(ah / 2, Math.abs(sx) * (ah / bw));
-      var by = bt + Math.min(bh / 2, Math.abs(sx) * (bh / bw));
-      // 1 直下だけのときは頂点から真下。同じゲートウェイから回り込み縁も
-      // 出るときは（上の srcSeq が vert を数える）頂点上の辺に沿って刻む
-      if (vf === 0 && o.outCount > 1 && o.sideCards.length) {
-        // 同じひし形から回り込み縁も出るとき（上の srcSeq が vert を数える）、
-        // 頂点直下の直下げが回り込みの降り線と重なる（実測並走 34px）。
-        // 出所を下辺に沿って刻むが、終端は上頂点のまま（検査: 終端は頂点、
-        // 水平成分 20% 未満）
-        sx = ((o.outI || 0) - (o.outCount - 1) / 2) * Math.max(14, Math.min(22, (bw - 16) / (o.outCount - 1)));
-        ax2 = acx + sx;
-        ay = ab - Math.min(ah / 2, Math.abs(sx) * (ah / bw));
-      }
+      // ゲートウェイ同士の前方分岐: 垂直下降。発は下辺・着は上辺を同じ目盛で刻む
+      // （顔スロット登記）。同宛先の条件違いも始点・終点とも左右に並列分散し、
+      // 重ならず交差せず、列間隔は矢じり幅より広く保つ。
+      var gs2 = o.gslot || 0;
+      var ax2 = acx + gs2;
+      var ay2 = ab - Math.min(ah / 2, Math.abs(gs2) * (ah / aw));
+      var bx2 = bcx + gs2;
+      var by2 = bt + Math.min(bh / 2, Math.abs(gs2) * (bh / bw));
+      var dv = Math.max(9, Math.min(30, (by2 - ay2) * 0.4));
       return {
-        d: "M" + ax2 + "," + ay + " C" + ax2 + "," + (ay + dv) + " " + bx2 + "," + (by - dv) + " " + bx2 + "," + by,
+        d: "M" + ax2 + "," + ay2 + " C" + ax2 + "," + (ay2 + dv) + " " + bx2 + "," + (by2 - dv) + " " + bx2 + "," + by2,
         tan: 90, face: "down", keepX: true, end: false,
-        lx: Math.max(ax2, bx2) + 8, ly: (ay + by) / 2 + (vf === 0 ? 0 : (vf % 2 ? 13 : -13)),
+        lx: Math.max(ax2, bx2) + 8, ly: (ay2 + by2) / 2 + (gs2 > 0 ? 13 : gs2 < 0 ? -13 : 0),
       };
     }
 
@@ -3157,32 +3167,19 @@ var row = sc.closest(".fc-row");
       // （s084/s100/s112/s116 の 4 組）。頂点列から左へ退避させる
       var nxS = bcx + arrOff - (o.srcGw ? 16 : 0);
       var ndv = Math.max(9, Math.min(26, (bt - ab) * 0.45));
-      // 同じ出所・同じ宛先の重複縁（条件違いで同じ行き先）は出る点も入る点も
-      // 同じになる。同じ点から始めると数 px 進んだ先まで重なる（実測 entryClash 10）。
-      // 下の遠方縁と同じ考え方で行き縁の連番ぶん刻む。
+      // 出口は顔スロット登記どおりひし形の下辺に沿って刻む（頂点共有はやめた。
+      // 同じ点から複数の矢印が出ると出所を辿れない）。着地は宛先側ファンで刻み、
+      // 頂列とは 16px 退避させて回り込み縁の縦線と列を重ねない。
+      var gs = o.srcGw ? (o.gslot || 0) : 0;
+      var aby = ab - Math.min(ah / 2, Math.abs(gs) * (ah / aw));
+      var nsx = acx + gs;
       var nOcc = o.outCount || 0;
-      var nsx = acx, ncx = acx, ncy = ab + ndv;
-      if (nOcc > 1) {
-        // 矩形カードは出る点そのものを刻む。ひし形は頂点共有が仕様（頂点直結
-        // ルール）なので刻まない（実測: ±11 の刻み出所が頂点規則を破り、なお
-        // かつ双子の曲線が回り込み縁の頂列縦線に 16px 並走した）。ひし形の
-        // 双子は最初の手前に着地側の制御点を置いて頂点から即座に着地方向へ
-        // 逸れさせ、頂列を降りる縦線を作らない（宛先側ファンが着地を刻む）
-        if (o.srcGw) {
-          // 着地は回り込み縁が頂列帯へ降りる縦線（頂点から左へ 16px 退避させた
-          // 列や、その左の刻み列）と列を重ねない。双方向に刻んだ左側がちょうど
-          // その列に落ちて 32px 並走した（実測 s000 双子 × s004 の戻り）。
-          // 帯の着地を「頂列−16 〜 頂列−9」の安全窓へ寄せる
-          var nxLo = bcx - 16, nxHi = bcx - 9;
-          if (nxS < nxLo) nxS = nxLo + Math.max(0, o.outI || 0) * 7;
-          if (nxS > nxHi) nxS = nxHi;
-          if (nxS > nxLo && nxS - nxLo < 6) nxS = nxLo;
-          ncx = nxS; ncy = ab + ndv * 0.45;
-        }
-        else nsx += ((o.outI || 0) - (nOcc - 1) / 2) * Math.max(14, Math.min(22, (aw - 16) / (nOcc - 1)));
-      }
+      // 刻みは角丸カードだけ。ひし形の中央目盛（gslot が 0）は「未刻み」とは
+      // 違うので二重に刻まない（実測: 中央出口が 0+11 に押されて辺から浮いた）
+      if (!o.srcGw && nOcc > 1) nsx += ((o.outI || 0) - (nOcc - 1) / 2) * Math.max(14, Math.min(22, (aw - 16) / (nOcc - 1)));
+      var ncx = nsx, ncy = aby + ndv;
       return {
-        d: "M" + nsx + "," + ab + " C" + ncx + "," + ncy + " " + nxS + "," + (bt - ndv) + " " + nxS + "," + bt,
+        d: "M" + nsx + "," + aby + " C" + ncx + "," + ncy + " " + nxS + "," + (bt - ndv) + " " + nxS + "," + bt,
         tan: 90, face: "down", keepX: true, end: true, lx: Math.min(nsx, ncx, nxS) - 8, ly: (ab + bt) / 2,
       };
     }
@@ -3200,11 +3197,11 @@ var row = sc.closest(".fc-row");
           var gxK = Math.max(10, (sideLeftMin === null ? 10 : sideLeftMin - 14) - kIdx * 12);
           var xd = leftBound === null ? (ax - 12) : (leftBound + ax) / 2;
           var kY = rBotT + 14 + (kN - 1 - kIdx) * 16;
-          // 退回縁の下面進入は行下帯から縦に上がる。隣接の行き縁も同じ頂点から
-          // 下に伸びるので、刻みを矢じりの半幅+余裕（22px）以上にしないと
-          // 行き縁の線が矢じりに触れる（実測 16 刻みで矢じり縁から 1.8px）
-          var exK = o.dstGw ? bcx + (kIdx - (kN - 1) / 2) * 22
+          // 退回縁の下面進入は行下帯から縦に上がる。着地点は顔スロット登記が
+          // 宛先ひし形の下辺の外側目盛へ刻む（出口の降り線と列を共有しない）
+          var exK = o.dstGw ? bcx + (o.landSlot || 0)
                             : bx + bw * (0.38 - 0.30 * (kN > 1 ? kIdx / (kN - 1) : 0.5));
+          var tipK = bb - (o.dstGw ? Math.min(bh / 2, Math.abs(exK - bcx) * (bh / bw)) : 0);
           var krx = Math.max(10, Math.min(30, Math.abs(exK - xd) * 0.25));
           var dK = "M" + ax + "," + acy +
             " C" + (ax - 14) + "," + acy + " " + xd + "," + (acy + 16) + " " + xd + "," + (ab + 6) +
@@ -3212,7 +3209,7 @@ var row = sc.closest(".fc-row");
             " C" + xd + "," + (rBotS + 14) + " " + gxK + "," + (rBotS + 14) + " " + gxK + "," + (rBotS + 24) +
             " L" + gxK + "," + (kY + 10) +
             " C" + gxK + "," + kY + " " + (exK - krx) + "," + kY + " " + exK + "," + kY +
-            " L" + exK + "," + (bb + 5) + " L" + exK + "," + bb;
+            " L" + exK + "," + (tipK + 5) + " L" + exK + "," + tipK;
           return { d: dK, tan: -90, face: "up", keepX: true, end: true,
             rowGap: (kY - rBotT) + 26, lx: gxK - 8, ly: kY - 9 };
         }
@@ -3234,12 +3231,11 @@ var row = sc.closest(".fc-row");
         var gxW = sideRightOver === null
           ? Math.max(spanR + base, Math.min(clampW - 14, clampW - 14 + fIdx * 12))
           : Math.max(spanR + base, sideRightOver + 14 + fIdx * 12);
-        var sxO = acx;
+        // ひし形の出所は顔スロット登記の下辺刻み。角丸カードは下辺を扇で刻む
+        var gsO = o.srcGw ? (o.gslot || 0) : 0;
+        var sxO = acx + gsO;
+        var sdy = ab - (o.srcGw ? Math.min(ah / 2, Math.abs(gsO) * (ah / aw)) : 0);
         var ocF = o.outCount || 0;
-        // ひし形の出所は必ず下頂点の真下（検査規則）。扇で刻むと頂点から
-        // 外れる。同じゲートウェイに回り込みが 2 本ある場合は頂点が一点なので
-        // 刻めないが、行区間が重ならなければ降り線は当たらない（実測 0）。
-        // ゲートウェイ以外（角丸カード）は下辺を刻んでよい
         // 出口扇はサイド列の有無に限らず、同じ出所に複数出口があるなら刻む。
         // 360px 実測: サイド列のない行の回り込みが扇なしで中央 x に出たため、
         // −11 にずれた隣接ドロップ縁の曲線（中央へ戻ってくる）と同じ列に
@@ -3304,7 +3300,7 @@ var row = sc.closest(".fc-row");
         var rrS = Math.max(0, Math.min(6, Math.abs(gxW - sxO) / 2, Math.abs(yyF - krf - yS) / 2));
         var sgnS = gxW >= sxO ? 1 : -1;
         var sgnK = yyF - krf >= yS ? 1 : -1;
-        var dF = "M" + sxO + "," + ab +
+        var dF = "M" + sxO + "," + sdy +
           " L" + sxO + "," + (yS - rrS * sgnK) +
           (rrS > 0 ? " Q" + sxO + "," + yS + " " + (sxO + rrS * sgnS) + "," + yS : "") +
           " L" + (gxW - rrS * sgnS) + "," + yS +
@@ -3394,23 +3390,19 @@ var row = sc.closest(".fc-row");
       var oc = o.outCount || 0;
       var sxStart = acx;
       if (oc > 1) {
-        // 普通カードは下辺の幅ぶん左右に刻む。ひし形は下頂点が一点なので、頂点から
-        // すぐ分岐させるため小さめに刻む（分かれ目が頂点直下に見える＝通常の分岐図）。
-        var outStride = o.srcGw
-          ? Math.max(8, Math.min(16, (aw * 0.5) / Math.max(1, oc - 1)))
-          : Math.max(6, Math.min(22, (aw - 16) / (oc - 1)));
+        // 普通カードは下辺の幅ぶん左右に刻む。ひし形は顔スロット登記の下辺
+        // 刻みを使うのでこの扇は使わない。
+        var outStride = Math.max(6, Math.min(22, (aw - 16) / (oc - 1)));
         // 刻み幅の分母(outCount)と連番は同じ数え方で揃える。fan は戻る縁も
         // 通し番号なので、それを含む数え方の outCount と組み合わせると中央寄せが
         // 崩れて全編が右へ寄る（outI は outCount と同じ集合の連番）
-        // ひし形は頂点が一点で、刻むと「下頂点の真下」規則から外れる。
-        // srcSeq が vert を数えるようになって折りたたみ時の outCount が 1 に
-        // ならなくなり、8px 刻みで頂点から外れた（実測 512 ≠ 520）
-        sxStart = o.srcGw ? acx : acx + ((o.outI || 0) - (oc - 1) / 2) * outStride;
+        sxStart = acx + (o.srcGw ? (o.gslot || 0) : ((o.outI || 0) - (oc - 1) / 2) * outStride);
       }
+      var ab0 = ab - (o.srcGw ? Math.min(ah / 2, Math.abs(o.gslot || 0) * (ah / aw)) : 0);
       var fyD = ab + 14 + f * 8;
       var d1D = Math.max(9, Math.min(20, (fyD - ab) * 0.6));
-      d = "M" + sxStart + "," + ab +
-          " C" + sxStart + "," + (ab + d1D) + " " + gx + "," + (fyD - d1D) + " " + gx + "," + fyD;
+      d = "M" + sxStart + "," + ab0 +
+          " C" + sxStart + "," + (ab0 + d1D) + " " + gx + "," + (fyD - d1D) + " " + gx + "," + fyD;
       yRun = fyD;
     }
 
@@ -3420,8 +3412,18 @@ var row = sc.closest(".fc-row");
     // 同じ宛先へ集まる縁は、進入 x を連番ぶん刻む。出所 fan だけでは別々の出所が同じ点に
     // 収束して縦線が潰れる（実測 s119 頂点 22 セル）。ひし形は頂点のまわりで刻む。
     var arrOff = o.arrOff || 0;
-    var ex = o.dstGw ? bcx : bx + bw * (left || up ? 0.26 : 0.74) + (left ? -f * 14 : f * 14);
-    ex = Math.max(bx + 6, Math.min(bx + bw - 6, ex + arrOff));
+    // ひし形への正面進入も辺に沿って刻む（前面は上辺、退回縁は下辺）。下辺の
+    // 退回着地は顔スロット登記の外側目盛を使い、前面の複数本は矢じり幅より
+    // 広く刻む。着地の y は傾いた辺の実測高さに立ち、矢じりを辺から浮かせない
+    var gwIn = o.dstGw ? (up ? (o.landSlot || 0)
+      : (arrC > 1 ? (arrI - (arrC - 1) / 2) * Math.min(40, Math.max(14, (bw - 16) / (arrC - 1))) : 0)) : 0;
+    var ex = o.dstGw ? bcx + gwIn : bx + bw * (left || up ? 0.26 : 0.74) + (left ? -f * 14 : f * 14);
+    ex = Math.max(bx + 6, Math.min(bx + bw - 6, ex + (o.dstGw ? 0 : arrOff)));
+    var tipY = faceY;
+    if (o.dstGw) {
+      var eDrop = Math.min(bh / 2, Math.abs(ex - bcx) * (bh / bw));
+      tipY = up ? bb - eDrop : bt + eDrop;
+    }
     // 側通路の縁が下面へ溢れるほど集まるとき、上面進入の順序を通路の入れ子と
     // 揃える（外側のレーン=区間の深い縁ほど、レーンの近い端から入る）。
     // 連番の通し刻みのままだと深い縁が反対側から入り、旋回が浅い縁の曲線と
@@ -3434,14 +3436,14 @@ var row = sc.closest(".fc-row");
       }
     }
     var stub = Math.max(10, Math.min(22, Math.abs(faceY - yRun) * (up ? 0.2 : 0.25)));
-    var ym = up ? faceY + stub : faceY - stub;   // 正面の外側、直進区間の端
+    var ym = up ? tipY + stub : tipY - stub;   // 正面の外側、直進区間の端
     var dd = Math.max(12, Math.min(34, Math.abs(ym - yRun) * 0.45, Math.abs(ex - gx) * 0.7));
     var yt = up ? Math.min(yRun - 2, ym + dd) : Math.max(yRun + 2, ym - dd);
     var lblY = up ? yRun + 16 : yRun - 9;        // ラベルは扇（角）の出口の直後
     var front = {
       d: d + " L" + gx + "," + yt +
          " C" + gx + "," + (yt + sg * dd) + " " + ex + "," + (ym - sg * dd) + " " + ex + "," + ym +
-         " L" + ex + "," + faceY,
+         " L" + ex + "," + tipY,
       tan: up ? -90 : 90, face: up ? "up" : "down", keepX: true, end: true, lx: gx - 8, ly: lblY,
     };
     // 他のボックス（ひし形は輪郭）の中を横切るなら側面から入り直す

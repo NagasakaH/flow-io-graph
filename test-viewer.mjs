@@ -927,23 +927,28 @@ function checkFlowGeom(rep, tag) {
   for (const p of rep.paths) {
     assert.deepEqual(p.bad, [], tag + ": 縁がひし形の中を横切っている: " + p.edge + " → " + p.bad.join(", "));
   }
-  // 2) 出所は前方分岐なら下頂点、ループ／後ろ向き縁なら左頂点（頂点の重複使用をやめた）
+  // 2) 出所はループ／後ろ向き縁なら左頂点、前方分岐はひし形の下辺に沿って刻む
+  //    （頂点の共有をやめた。同じひし形から出る縁同士は始点が 10px 以上離れ、
+  //    どの線がどこから出たか辿れること）
+  const gwStarts = new Map();
   for (const p of rep.paths) {
     const src = rep.gws.find((d) => d.node === p.edge.split("|")[0]);
     if (!src) continue;
     if (p.route === "loop") {
       assert.ok(Math.abs(p.start.x - src.x0) < 4, tag + ": 左頂点から出ていない（x）: " + p.edge);
       assert.ok(Math.abs(p.start.y - src.cy) < 4, tag + ": 左頂点から出ていない（y）: " + p.edge);
-    } else if (p.route === "vertex") {
-      // 頂点直結は同宛先の条件数だけ下辺に沿って左右へ刻む（ひし形の輪郭の上にあること）
-      const hw = (src.x1 - src.x0) / 2, hh = (src.y1 - src.y0) / 2;
-      const off = Math.abs(Math.abs(p.start.x - src.cx) / hw + (p.start.y - src.cy) / hh - 1);
-      assert.ok(off < 0.08, tag + ": 頂点直結縁の出所がひし形の下辺上にない: " + p.edge + " 差=" + off.toFixed(2));
-      assert.ok(Math.abs(p.start.x - src.cx) <= hw * 0.6, tag + ": 頂点直結縁の出所が頂点から離れすぎ: " + p.edge);
-    } else {
-      assert.ok(Math.abs(p.start.x - src.cx) < 4, tag + ": 出所が下頂点の真下にない: " + p.edge);
-      assert.ok(Math.abs(p.start.y - src.y1) < 4, tag + ": 出所が下頂点から出ていない: " + p.edge);
+      continue;
     }
+    const hw = (src.x1 - src.x0) / 2, hh = (src.y1 - src.y0) / 2;
+    const off = Math.abs(Math.abs(p.start.x - src.cx) / hw + (p.start.y - src.cy) / hh - 1);
+    assert.ok(off < 0.08, tag + ": 前方分岐縁の出所がひし形の下辺上にない: " + p.edge + " 差=" + off.toFixed(2));
+    assert.ok(Math.abs(p.start.x - src.cx) <= hw * 0.6, tag + ": 出所が下頂点から離れすぎ: " + p.edge);
+    const seen = gwStarts.get(src.node) || [];
+    for (const q of seen) {
+      assert.ok(Math.abs(q.x - p.start.x) >= 10,
+        tag + ": 同じゲートウェイの出口が重なっている: " + p.edge);
+    }
+    seen.push(p.start); gwStarts.set(src.node, seen);
   }
   // 3) ゲートウェイ間の「失敗」は頂点から頂点への垂直下降（水平成分 20% 未満）
   const fail = rep.paths.find((p) => p.edge === "step:order-intake/gate-result|next|step:order-intake/retry-gate");
@@ -952,8 +957,14 @@ function checkFlowGeom(rep, tag) {
   assert.ok(fail.hspan / fail.len < 0.2,
     tag + ": 失敗縁の水平成分が大きすぎる: " + fail.hspan.toFixed(1) + "/" + fail.len.toFixed(1));
   const dst = rep.gws.find((d) => d.node === "step:order-intake/retry-gate");
-  assert.ok(Math.abs(fail.end.x - dst.cx) < 4 && Math.abs(fail.end.y - dst.y0) < 4,
-    tag + ": 失敗縁が再試行判定の上頂点へ入っていない: " + JSON.stringify(fail.end));
+  {
+    const hw = (dst.x1 - dst.x0) / 2, hh = (dst.y1 - dst.y0) / 2;
+    const off = Math.abs(Math.abs(fail.end.x - dst.cx) / hw - (fail.end.y - dst.cy) / hh - 1);
+    assert.ok(off < 0.08, tag + ": 失敗縁の終端が再試行判定の上辺上にない: 差=" + off.toFixed(2));
+    assert.ok(Math.abs(fail.end.x - dst.cx) <= hw * 0.6, tag + ": 失敗縁の終端が上頂点から離れすぎ");
+    assert.ok(Math.abs(fail.end.x - fail.start.x) < 2,
+      tag + ": 失敗縁が同じ列の垂直下降になっていない: " + JSON.stringify([fail.start, fail.end]));
+  }
   // 4) 縁ラベルは ⓘ ともひし形の輪郭とも重ならない
   for (const L of rep.labels) {
     for (const I of rep.infos) {
@@ -980,7 +991,7 @@ function checkFlowGeom(rep, tag) {
     assert.ok(!insidePt(c, d), tag + ": 分岐ノードの ⓘ がひし形の中にある: " + I.node);
   }
   // 6) 分岐・ループ縁どうしが交差しない（成功経路と打ち切り経路が重なって見えないこと）。
-  //    同じ頂点から出る縁は始点近傍を除外する（頂点を共有するのは仕様どおり）
+  //    端点近傍（ループの左頂点と自縁の始点など）は除外する
   const nearPt = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) < 14;
   for (let i = 0; i < rep.paths.length; i++) {
     for (let j = i + 1; j < rep.paths.length; j++) {
