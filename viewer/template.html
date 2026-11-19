@@ -285,7 +285,12 @@ table.grid tbody tr.sel { background: var(--bg-sel); }
 #flow-edges path.invokes { stroke: var(--e-invokes); }
 #flow-edges path.dash { stroke-dasharray: 5 4; }
 #flow-edges path.next { stroke: var(--e-next); }
-#flow-edges path.loop { stroke: var(--e-loop); stroke-width: 2.4; opacity: .95; }
+/* ループ縁の線幅は 1.6px に保つ。検査器は中心線 ±max(.75, 線幅/2) の帯を 2px マスに
+   落として重なりを数えるため、2.0px 以上の線は交差角 45° でも重なり 6 マス（12px）に
+   なって parallel 判定（合成検査 out/tmp-audit/mx.html で実測: 1.6px は 30° まで無違反、
+   2.0px は 45° から違反、2.4px は 90° でも違反）。戻る縁は通路の縁と必ず交差するので
+   細くし、破線と色で区別する。 */
+#flow-edges path.loop { stroke: var(--e-loop); stroke-width: 1.6; stroke-dasharray: 8 4; opacity: .95; }
 /* 分岐・ループのラベルはカードより上に出す（縁そのものはカードの裏を回る） */
 #flow-edge-labels { position: absolute; inset: 0; pointer-events: none; z-index: 3; overflow: visible; }
 #flow-edge-labels text {
@@ -300,6 +305,10 @@ table.grid tbody tr.sel { background: var(--bg-sel); }
 #flow-edge-labels text.hl { font-size: 11.5px; }
 #flow-edge-labels text.dimmed { opacity: .2; }
 .fc-row { display: flex; align-items: flex-start; gap: 20px; position: relative; z-index: 1; }
+/* 展開中は行の下に空き帯を作る。回り込み縁はサイドカード列の下（行の下端より下）
+   を水平に渡るが、行間に基本の間隔がないため隣の行のカードに刺さった（実測）。
+   inline の rowGap（下面進入の段より広い）があればそちらが勝つ */
+.fc-row.band-gap { margin-bottom: 34px; }
 .fc-mid { flex: 0 0 440px; min-width: 0; }
 .fc-side-slot { flex: 1 1 0; min-width: 0; height: 0; position: relative; z-index: 2; align-self: center; }
 /* サイド列は中央の行の垂直中央に置く。行数を増やさず、はみ出しは上下の 20px 通路へ
@@ -337,6 +346,18 @@ table.grid tbody tr.sel { background: var(--bg-sel); }
 .fc-arrow-row .fc-arrow { flex: 0 0 440px; display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--dim); font-size: 11px; padding: 4px 0; position: relative; z-index: 1; }
 .fc-arrow-row .fc-side-slot { visibility: hidden; }
 /* 開始・終了の目印（next 縁がない先頭・末尾だけに置く） */
+/* 狭幅（980px 以下）では組みを変えず、横幅だけ横スクロールに任せる。
+   縦積みに折り返すと、上から下へ降りる縁が中央の下に敷いたサイドカードを
+   必ず刺す（実測: big 360px で刺し 128・並走 52・矢じり衝突 28）。1440px 版と
+   同じトポロジ（中央 440 + サイド列 240×2 + 行間 gap 40）に行の下限幅を張り、
+   見ためは主流のフローチャートビューアと同じ「横にスクロールして読む」形に
+   した。縦積みにした 8,281px の塔（カードが 37px の塔に潰れ、着地点が列の
+   表示範囲外になった縁が描画から消える）よりも、全縁が描かれて追える
+   こっちのほうがマシ */
+@media (max-width: 980px) {
+  .fc-row { min-width: 960px; }
+}
+
 .fc-term-row .fc-mid { text-align: center; }
 .fc-term-row .term {
   display: inline-flex; align-items: center; height: 24px; padding: 0 16px;
@@ -1471,6 +1492,8 @@ html[data-theme="light"] {
     // ラベルの有無にかかわらず全部描く（ラベル無しの非隣接分岐が消えないように）。
     collectLinks: function (boxes) {
       var self = this;
+      // min-width 再入で二重に走ることがある。自分の収集分は自分で捨てる
+      this.linkItems = [];
       var idx = this.stepIdx || new Map();
       var fan = new Map(); // 同じ出所の縁を刻む（ガター深さと進入点をずらす）
       var vfan = new Map(); // 頂点直結（ひし形同士）を刻む。同じ頂点に重ねない
@@ -1560,10 +1583,22 @@ html[data-theme="light"] {
           if (k < 0) { laneEnds.push(hi); k = laneEnds.length - 1; }
           else laneEnds[k] = hi;
           it.chan = k;
+          it.laneUsed = !it.back && !it.self;
           deep = Math.max(deep, k * LANE_PITCH + (it.fan || 0) * FAN_PITCH);
           // 展開中は行き縁の通路を使わないので deepOpen へは戻る縁だけを効かせる
           if (it.back) deepOpen = Math.max(deepOpen, k * LANE_PITCH_OPEN + (it.fan || 0) * FAN_PITCH_OPEN);
         });
+        // 右側の行き縁は「区間の深い（早く始まる）縁ほど外側」に並び替える。
+        // first-fit のまま（上の行が内側）だと、浅い縁の下部スイープが内側の
+        // 深い縁の縦線に触れる（360px で通路が 8px ピッチに縮むと接線状に
+        // 10px 並走。実測 s116→s119 の旋回が s112→s119 の縦線に寄る）。
+        // 深い縁を外側・低い段にすると全縁の段順と一致して交差点だけになる
+        if (side === "right") {
+          var lastLane = laneEnds.length - 1;
+          mine.forEach(function (it) {
+            if (it.laneUsed && !it.back) it.chan = lastLane - it.chan;
+          });
+        }
         laneUnits[side] = { deep: deep, deepOpen: deepOpen, lanes: laneEnds.length };
         // 展開中は行き縁（前方）が通路を使わない（サイド列が左右を埋め、外へ出ると
         // サイドカードを貫く）。なので行き縁も混ぜた上の first-fit だと通路番号に穴が
@@ -1587,35 +1622,130 @@ html[data-theme="light"] {
         });
         laneUnits[side].lanesBack = backEnds.length;
         laneUnits[side].deepBack = deepBack;
+        // 前方縁も別番号で詰める。展開中の前方縁はサイド列の外側の余白を回る
+        // ため、内側の通路を使う戻る縁と番号を共有すると穴が出て、余白を実深度
+        // ぶん刻めなくなる。
       });
+      // 前方縁の回り込みは左右どちらの縁でも右列の外側の縦通路を共有する。
+      // 側別に詰めると左右 1 本ずつのとき fIdx が両方 0 になり、縦線が同じ x
+      // に重なった（実測 1440px で幹 2 本が 134px 並走）。通路は側を問わず
+      // 右側に 1 本目があるので、first-fit は side を割愛して全体で詰める
+      var fwdEnds = [];
+      this.linkItems.forEach(function (it) {
+        if (it.back || it.self || it.vert) { it.chanFwd = 0; return; }
+        var s0 = idx.get(it.edge.source) || 0, t0 = idx.get(it.edge.target) || 0;
+        if (Math.abs(t0 - s0) < 2) { it.chanFwd = 0; return; }
+        var lo2 = Math.min(s0, t0), hi2 = Math.max(s0, t0);
+        var k = -1;
+        for (var li = 0; li < fwdEnds.length; li++) {
+          if (fwdEnds[li] < lo2) { k = li; break; }
+        }
+        if (k < 0) { fwdEnds.push(hi2); k = fwdEnds.length - 1; }
+        else fwdEnds[k] = hi2;
+        it.chanFwd = k;
+      });
+      laneUnits.left.lanesFwd = fwdEnds.length;
+      laneUnits.right.lanesFwd = fwdEnds.length;
       this.laneUnits = laneUnits;
-      // 宛先別の進入索引: 同じカードへ集まる縁の進入点を段違いにするための連番。
+      // 余白の確保: 展開中の前方縁の通路はサイド列の外側を通る。レーンをその
+      // ぶん広げないとサイドカードの外に空きがなく、縦線がカードの上に出る。
+      var anyOpen = state.expanded && state.expanded.size > 0;
+      var padL = 8, padR = 8;
+      if (anyOpen) {
+        var lF = laneUnits.left ? (laneUnits.left.lanesFwd || 0) : 0;
+        var rF = laneUnits.right ? (laneUnits.right.lanesFwd || 0) : 0;
+        var bK = laneUnits.left ? (laneUnits.left.lanesBack || 0) : 0;
+        // 1 本でも通路はサイド列の外側 +14px を通る。>1 だと 1 本のとき
+        // padR=8 で clamp がカード端と coincide し、縦線がカードの縁に
+        // 張り付いた（実測 flow-open 1440 で貫通 94px）
+        // 前方縁の通路は右側のみ（上の side 割愛）。左は戻る縁だけなので
+        // 左余白は bK で決める。lF を左側に入れると左に 34px の空きが増え、
+        // 何も通らない通路を確保してレーンを無駄に広げる
+        if (bK >= 1) padL = Math.max(padL, 8 + 14 + 12 * (bK - 1) + 12);
+        if (rF >= 1) padR = Math.max(padR, 8 + 14 + 12 * (rF - 1) + 12);
+      }
+      this.lane.style.paddingLeft = padL + "px";
+      this.lane.style.paddingRight = padR + "px";
+      // 窄幅では行が min-width（サイド列幅込み）でパディングを呑み込み、padR の
+      // はずした通路領域が横スクロール幅に現れない（Chrome ははみ出し子の
+      // padding-right を scrollWidth に足さない）。レーン自身の min-width で
+      // 通路領域ごと確保し、横スクロールの側に逃がす。行の flex 幅は測る順で
+      // 160px などと過小になるので、はみ出しが反映された scrollWidth を基準にする
+      // clientWidth は自分の min-width で膨らむ。それを基準に通路を確保すると
+      // 再測定のたびに padR ぶん成長し続ける（実測: イベントごとに +8px ずつ
+      // 広がり、中央カードが流れて縁が全滅した）。一度 min-width を外して
+      // 「コンテンツ本当の幅」を測り、そこへ通路を足した値を毎回同じように
+      // 置く（固定点。広げるたび基準が動かなくなる）
+      var padCurL = parseFloat(this.lane.style.paddingLeft) || 0;
+      var padCurR = parseFloat(this.lane.style.paddingRight) || 0;
+      this.lane.style.minWidth = "";
+      var innerW = Math.max(this.lane.clientWidth, this.lane.scrollWidth) - padCurL - padCurR;
+      var needW = innerW + padL + padR;
+      this.lane.style.minWidth = needW > this.lane.clientWidth ? needW + "px" : "";
+      // 直前の測りで lane.scrollWidth が古い値だと min-width も古い（690px 等）。
+      // 縁の clampW はその古い幅で決まるので、min-width が動いたなら
+      // その場で組み直さないと古い通路 x が経路に凍る（実測 360px で
+      // 縦線 686 がサイド列 683 に刺さった）。1 回の測り直しで収まる
+      var minWNow = this.lane.style.minWidth;
+      // ガードは専用のものを使う。_rowGapPass を流用すると再入中の
+      // rowGap 測り直し（1 本目）まで殺して、縁が古い行間のまま凍る
+      // （実測: たたみ big で entryClash 56・arrowClash 56 の嵐）
+      if (this._minWSnap !== undefined && minWNow !== this._minWSnap && !this._minWPass) {
+        this._minWSnap = minWNow;
+        this._minWPass = true;
+        // ここから後ろ（arr/outCount の連番付け、進入索引、縁の収集）を
+        // 飛ばしてはいけない。再入先は measureEdges ではなく collectLinks
+        // 自身。measureEdges を呼ぶと連番が空のまま縁が描かれ、同じ出所の
+        // 重複縁が同一経路に潰れた（実測 360px で entryClash 10 の嵐）
+        try { this.collectLinks(boxes); } finally { this._minWPass = false; }
+        return;
+      }
+      this._minWSnap = minWNow;
+      var bandRows = this.lane.querySelectorAll(".fc-row");
+      Array.prototype.forEach.call(bandRows, function (rw, rwi) {
+        if (anyOpen && rwi < bandRows.length - 1) rw.classList.add("band-gap");
+        else rw.classList.remove("band-gap");
+      });
+      // 宛先別・側別の進入索引: 同じカードへ集まる縁の進入点を段違いにするための連番。
       // 出所の fan だと別々の出所が全部 0 になり、宛先頂点で縦線が潰れる（s119 収束 22 セル）。
-      var dstSeq = new Map();
+      // 左辺を使う縁と右辺を使う縁では刻む辺が違うので側ごとに数え直す。
+      // 並び順は通路の深さにそろえる。同じ宛先へ集まる縁は「出る行が深いほど深い通路」に
+      // なる（同じ行き先では区間が入れ子になるので first-fit が保証する）。深い通路の縁ほど
+      // 自分の通路に近い側（左辺は上、右辺は下）から入れないと、曲がりで内側の通路の縦線を
+      // 浅い角度で横切り、その区間が parallel になる（実測 18 セル）。
+      var dstGroups = new Map();
       this.linkItems.forEach(function (it) {
-        if (it.self || it.vert) return;
-        var key = it.edge.target;
-        var a = dstSeq.get(key) || 0;
-        it.arr = a;
-        dstSeq.set(key, a + 1);
+        if (it.vert) return;
+        var key = it.edge.target + "|" + it.side;
+        var g = dstGroups.get(key);
+        if (!g) dstGroups.set(key, g = []);
+        g.push(it);
       });
-      // 連番と本数で進入点を刻む。刻み幅はここで決めず stepLinkPath 側の辺の実寸で決める
-      // （同じ宛先へ 10 本以上集まると 9px 固定ではカードの辺の高さに入り切らず、
-      // クランプで折り返して先端が同じ y に潰れる。辺幅 ÷ 本数に縮めるため両方渡す）。
-      this.linkItems.forEach(function (it) {
-        it.arrCount = it.self || it.vert ? 0 : (dstSeq.get(it.edge.target) || 0);
+      dstGroups.forEach(function (g) {
+        var lft = g[0].side === "left";
+        g.sort(function (a, b) {
+          var d = (idx.get(a.edge.source) || 0) - (idx.get(b.edge.source) || 0);
+          return lft ? -d : d;
+        });
+        g.forEach(function (it, i) { it.arr = i; it.arrCount = g.length; });
       });
-      // 出所別の「扇を出す本数」: 同じカードの下頂点から出る縁は、そのままでは同じ点
-      // から出て少し進むまで重なる（s116→s117 と s116→s119 が 15 セル重畳）。出る x を
-      // 本数ぶん左右に刻んで、最初から分岐させる。戻る縁は左頂点出発で別経路なので数えない。
-      var srcOut = new Map();
+      // 出所別の「下頂点から扇を出す本数」とその連番: 同じカードの下頂点から出る縁は、
+      // そのままでは同じ点から出て少し進むまで重なる（s116→s117 と s116→s119 が 15 セル重畳、
+      // 同じ出所・同じ宛先の並行縁など 10 組は出る点も入る点も一致して entryClash）。
+      // 出る x を本数ぶん左右に刻んで最初から分岐させる。戻る縁は左頂点出発なので数えない。
+      var srcSeq = new Map();
       this.linkItems.forEach(function (it) {
-        if (it.self || it.vert || it.back || it.near) return;
+        it.outCount = 0; it.outI = 0;
+        // vert（ゲートウェイ直下）も同じ下頂点から出る。数えないと直下縁と
+        // 回り込み縁が出発 x が同じで、降り初め 32px が完全に重なる（実測 px34）
+        if (it.self || it.back) return;
         var s = it.edge.source;
-        srcOut.set(s, (srcOut.get(s) || 0) + 1);
+        it.outI = srcSeq.get(s) || 0;
+        srcSeq.set(s, it.outI + 1);
       });
       this.linkItems.forEach(function (it) {
-        it.outCount = it.self || it.vert || it.back || it.near ? 0 : (srcOut.get(it.edge.source) || 0);
+        if (it.self || it.back) return;
+        it.outCount = srcSeq.get(it.edge.source) || 1;
       });
     },
     termRow: function (label) {
@@ -1892,7 +2022,12 @@ html[data-theme="light"] {
         lu.right ? (sideGap <= 14 ? lu.right.deepOpen : lu.right.deep) : 0);
       if (sideGap <= 14) deep = Math.max(0, deep - 4 + sideGap);   // 展開中は 4 のぶんから出る
       var minW = 0;
-      if (deep > 0 && box.width < 900) {
+      // 980px 以下では行が縦積みに折り返す（上の @media）。折り返した行に
+      // 通路ぶんの最小幅を足すと、幅 290px の画面に 554px の行が張られて
+      // 右側がまた見えなくなった。通路はレーンの padding 側が持つので
+      // 行の広げ直しは不要（実測: laneW 624 で中央カードが 194px 見切れ）
+      var wrappedNarrow = window.matchMedia && window.matchMedia("(max-width: 980px)").matches;
+      if (deep > 0 && box.width < 900 && !wrappedNarrow) {
         minW = 440 + 20 * 2 + 2 * Math.min(170, Math.max(20, sideGap + deep + 8));
       }
       for (var ci = 0; ci < this.lane.children.length; ci++) {
@@ -1905,7 +2040,18 @@ html[data-theme="light"] {
       Array.prototype.forEach.call(this.lane.querySelectorAll(".fc-side"), function (sc) {
 var row = sc.closest(".fc-row");
         var mid = row ? row.querySelector(".fc-mid") : null;
-        if (mid) sc.style.maxHeight = Math.max(96, Math.round(mid.getBoundingClientRect().height) + 24) + "px";
+        // 列は行の下へ約 8px、下の行の列は行上へ約 8px はみ出す。行間 34px の
+        // 帯を回り込み縁が抜ける窓は 34−8−8=18px 必要なので、はみ出しを 8px に
+        // 抑える（+24 だと窓が 2px になり、どんな余白計算でも線が通れなかった・実測）
+        if (mid) {
+          var capH = Math.max(84, Math.round(mid.getBoundingClientRect().height) + 16);
+          // barely-fits escape: don't scroll away what would fit with just a
+          // little more room (edge builders drop edges to hidden cards)
+          var needH = sc.scrollHeight;
+          var midH0 = Math.round(mid.getBoundingClientRect().height);
+          if (needH > capH && needH <= midH0 + 80) capH = needH;
+          sc.style.maxHeight = capH + "px";
+        }
       });
       // 経路がまたぐべきでないボックス（他の行のカード）の矩形
       var others = [];
@@ -1923,12 +2069,26 @@ var row = sc.closest(".fc-row");
       // 列がその領域を占めるので、中央カード端とサイドカード端のあいだの通路（channnel）へ
       // 収める必要がある。この矩形でその通路幅を実測する。
       var sideCards = [];
-      Array.prototype.forEach.call(this.lane.querySelectorAll(".fc-side > *"), function (n) {
+      // .fc-side > * だけだとラッパ経由の入れ子（注釈付きの sub-card 等）を
+      // 見逃し、旋回窓の実測から抜けて線がカードを刺した（実測 pierce 16）。
+      // 逆にラッパ自身 (.sub-wrap 実測 y 182〜460) を障害物に数えると、実体
+      // のない 278px の壁になり窄幅の回り込みが全滅する。表示カードだけを
+      // 取り、ほかのカードを含むラッパは落として二重計上を防ぐ
+      var sideNodes = [];
+      Array.prototype.forEach.call(this.lane.querySelectorAll(".fc-side .fnode, .fc-side .sub-card, .fc-side .step-box"), function (n) {
+        sideNodes.push(n);
+      });
+      Array.prototype.forEach.call(sideNodes, function (n) {
+        var wrap = false;
+        for (var sn = 0; sn < sideNodes.length; sn++) {
+          if (sideNodes[sn] !== n && n.contains(sideNodes[sn])) { wrap = true; break; }
+        }
+        if (wrap) return;
         var r = n.getBoundingClientRect();
         if (r.width < 1 || r.height < 1) return;
         sideCards.push({
           x0: r.left - box.left, x1: r.right - box.left, y0: r.top - box.top, y1: r.bottom - box.top,
-          mx: (r.left + r.right) / 2 - box.left,
+          mx: (r.left + r.right) / 2 - box.left, el: n,
         });
       });
       // 行を最小幅まで広げたぶんはみ出すので、x の丸め上限はレーンの実幅でなく内容幅
@@ -1939,6 +2099,11 @@ var row = sc.closest(".fc-row");
         var cr = ck.getBoundingClientRect();
         if (cr.right - box.left > contentW) contentW = cr.right - box.left;
       }
+      // 窄幅では行がレーン幅を超えて横スクロールし、padR（回り込み通路の領域）は
+      // 子要素の rect に現れない。scrollWidth も見ておかないと clamp が padR 手前で
+      // 折返し、通路の縦線がサイドカードの上に潰れる（実測 360px で 704px 固定）
+      var laneSW = this.lane.scrollWidth;
+      if (laneSW > contentW) contentW = laneSW;
       var svgProbe = this.svg;
       this.edgeItems.concat(this.linkItems).forEach(function (it) {
         if (!it.fromEl.isConnected || !it.toEl.isConnected) { it.d = null; it.bb = null; return; }
@@ -1948,24 +2113,38 @@ var row = sc.closest(".fc-row");
           var sc = n.closest ? n.closest(".fc-side") : null;
           if (!sc || sc.scrollHeight <= sc.clientHeight + 2) return false;
           var sr = sc.getBoundingClientRect();
-          return r.bottom < sr.top + 4 || r.top > sr.bottom - 4;
+          // 縁の着地点はカードの辺の中点。その中点が見えるなら描く
+          // （+4 の内 Insets だと scrollIntoViewIfNeeded の半画面視認で
+          // 中点が 4px たりずつ外れ、縁が一生描けなかった・実測）
+          var cyv = (r.top + r.bottom) / 2;
+          return cyv < sr.top + 2 || cyv > sr.bottom - 2;
         };
         if (outOfSide(ra, it.fromEl) || outOfSide(rb, it.toEl)) { it.d = null; it.bb = null; return; }
         // ガターの位置: 展開中はサイドカード列との 20px 通路に寄せ、たたんだときは外側 30px を取る
         var obs = others.filter(function (q) { return q.el !== it.fromEl && q.el !== it.toEl; });
+        // 回り込み経路は「行の下」の空き帯を通るので、行の下端が必要（カード下端で
+        // なく行の下端。サイドカードは本文カードより高い）。
+        var rowBotOf = function (n) {
+          var rr = n && n.closest ? n.closest(".fc-row") : null;
+          return rr ? rr.getBoundingClientRect().bottom - box.top : null;
+        };
         var g = it.link
-          ? stepLinkPath(box, ra, rb, { probe: svgProbe, others: obs, sideCards: sideCards,
+          ? stepLinkPath(box, ra, rb, { probe: svgProbe, eid: it.edge.source + ">" + it.edge.target, others: obs, sideCards: sideCards,
               loop: it.loop, self: it.self, side: it.side, up: !!it.back, chan: it.chan,
-              chanBack: it.chanBack || 0, fan: it.fan,
+              chanBack: it.chanBack || 0, chanFwd: it.chanFwd || 0, fan: it.fan,
+              laneUsed: !!it.laneUsed,
               srcGw: it.srcGw, dstGw: it.dstGw, vert: it.vert, vfan: it.vfan, gBase: sideGap,
-              near: it.near,
+              near: it.near, srcRowB: rowBotOf(it.fromEl), dstRowB: rowBotOf(it.toEl),
+              srcRow: it.fromEl && it.fromEl.closest ? it.fromEl.closest(".fc-row") : null,
               arr: it.arr || 0, arrCount: it.arrCount || 0, outCount: it.outCount || 0,
+              outI: it.outI || 0,
               laneCount: (lu && lu[it.side]) ? lu[it.side].lanes : 0,
               laneCountBack: (lu && lu[it.side]) ? (lu[it.side].lanesBack || 0) : 0,
+              laneCountFwd: (lu && lu[it.side]) ? (lu[it.side].lanesFwd || 0) : 0,
               clampW: contentW,
             })
           : bezier(box, ra, rb, it.vertical, it.ioBox);
-        it.d = g.d; it.tan = g.tan; it.face = g.face;
+        it.d = g.d; it.tan = g.tan; it.face = g.face; it.rowGap = g.rowGap || 0; it.srcGap = g.srcGap || 0;
         if (it.link) { it.lx = g.lx; it.ly = g.ly; it.keepX = g.keepX; it.endAnchor = g.end; }
         it.bb = {
           y0: Math.min(ra.top, rb.top) - box.top - 8,
@@ -2022,6 +2201,52 @@ var row = sc.closest(".fc-row");
         win0 = sr.top - box.top - 160;
         win1 = sr.bottom - box.top + 160;
       }
+      // 下面進入の横走りが次行に当たらないよう、宛先行の下間隔を後から広げる。
+      // レイアウトは buildEdges より前なので、測った所要ぶんをここで足す（増やすだけ
+      // なので次回の再測定で収束する）。
+      var rowGaps = [];
+      var rowGapDs = [];
+      this.edgeItems.concat(this.linkItems).forEach(function (it) {
+        if (it.rowGap) {
+          var rw = it.toEl && it.toEl.closest ? it.toEl.closest(".fc-row") : null;
+          if (rw) rowGaps.push([rw, it.rowGap]);
+        }
+        // 回り込み通路の旋回は自行の下を走る。自行の行下余白も同じ仕組みで広げる
+        if (it.srcGap) {
+          var sw = it.fromEl && it.fromEl.closest ? it.fromEl.closest(".fc-row") : null;
+          if (sw) rowGapDs.push([sw, it.srcGap]);
+        }
+      });
+      var rowGapChanged = false;
+      // srcGap は窓の不足ぶんの「増分」。現在の余白（未設定なら band-gap の
+      // 34px）に足して書く。絶対値だと広げた後の再測定の要求が_CUR に負けて
+      // 窓が凍る（実測）
+      rowGapDs.forEach(function (rg) {
+        if (!(rg[1] > 0)) return;
+        var cur = parseFloat(rg[0].style.marginBottom || "0") ||
+          (typeof getComputedStyle === "function" ? parseFloat(getComputedStyle(rg[0]).marginBottom) || 0 : 0);
+        rg[0].style.marginBottom = (cur + rg[1]) + "px";
+        rowGapChanged = true;
+      });
+      rowGaps.forEach(function (rg) {
+        // インライン未設定の行は band-gap クラスの 34px が実際の余白。0 と数えると
+        // それより小さい srcGap が勝って帯を逆に狭める（実測 360px で窓が閉じたまま）
+        var cur = parseFloat(rg[0].style.marginBottom || "0") ||
+          (typeof getComputedStyle === "function" ? parseFloat(getComputedStyle(rg[0]).marginBottom) || 0 : 0);
+        if (cur < rg[1]) { rg[0].style.marginBottom = rg[1] + "px"; rowGapChanged = true; }
+      });
+      // 行間を広げたならレイアウトが動いた。先ほど測った経路は広げる前の位置で
+      // ずれている。measureEdges は展開とリサイズでしか呼ばれないので、自分で
+      // もう一度測らないと経路が古い座標のまま固まる（実測で矢印とカードが
+      // 150px ずれた）。広げるだけなので 1 回の測り直しで収まる。
+      // 広げたマージンで別の行の窓が動く（列カードの折返し位置が変わる）。1 回の
+      // やり直しでは 2 段目の窓が閉じたまま固まった（実測 flow: 要求 81px の適用
+      // 後に上カードが +29px 移動）。要求は単調に増えるので数回で定点化する
+      if (rowGapChanged && (this._rowGapPass || 0) < 3) {
+        this._rowGapPass = (this._rowGapPass || 0) + 1;
+        try { this.measureEdges(); } finally { this._rowGapPass--; }
+      }
+      this._lbDirty = true;   // d を測り直した = ラベル配置が見る線も組み直す
       // 全レーン重畳監査（out/overlap-audit.mjs）の期待縁数。サイド列の内スクロールで
       // カードが画面外のため意図的に描かない縁（it.d が null）は期待に数えない
       var drawable = [];
@@ -2033,6 +2258,10 @@ var row = sc.closest(".fc-row");
       // 縁の終端（矢印）のまわりはラベルを置かない場所として覚える。矢印の先がラベルに
       // 隠れると「どの縁がどこへ行くのか」が読めなくなる
       var arrows = [];
+      // 中央カードも障害物として避けるのは、行が画面幅に収まりきらない狭い画面だけ
+      // （360px でラベルが中央カードの上端に乗った）。広い画面で中央カードまで
+      // 避けたとき、代わりに縁の矢印の上へ退避してしまう事例が合成検査で出たため
+      var tight = (lane.parentElement ? lane.parentElement.clientWidth : 1e9) < 900;
       items.forEach(function (it, ii) {
         if (!it.d) return;
         var k = it.edge.kind;
@@ -2068,10 +2297,22 @@ var row = sc.closest(".fc-row");
           var ekey = it.edge.source + "|" + it.edge.kind + "|" + it.edge.target;
           for (var q = Math.max(0, ln - 10); q <= ln; q += 2) {
             var pp = path.getPointAtLength(q);
-            arrows.push({ k: ekey, x0: pp.x - 2, x1: pp.x + 2, y0: pp.y - 2, y1: pp.y + 2 });
+            // ±4px: 検査器の矢じり占有モデル（終端 12px ±4px）と同じ幅で覚える。
+            // ±2 だと検査の 4px 閾値との間に 2px の隙間が残った（たたみ 1440:
+            // 別条件ラベルが 114.5 に着いても三角模型は 114.3 まで届く）
+            arrows.push({ k: ekey, x0: pp.x - 4, x1: pp.x + 4, y0: pp.y - 4, y1: pp.y + 4 });
           }
         } catch (e) { /* 長さが測れない縁は無視する */ }
         if (!it.link || !it.label) return;
+        // ループ・戻る縁のラベルはたたんだ状態では置かない。狭いガター内で避ける
+        // 余地がなく、土台が他の縁のガター縦線を覆う（実測）。たたんでいる間は
+        // ループ線の形と色で示し、展開したときに見せる
+        if (tight && it.loop && !state.expanded.has(it.edge.source)) return;
+        // かつては狭い幅・たたみ時の長スパン縁のラベルを捨てていた（縦レーンの
+        // 束 120px に土台が収まらず 32px 隠れたため）。やめると「終了へ」「続行」
+        // が消えて分岐出口が読めなくなった（codex P2）。ラベル保証パス（他人
+        // ラベル・他人カード・自縁以外を避けて最大 460px 横向けに退避）を
+        // 実装済みなので、置きに行ってから測る方針に戻す
         // ラベルはカードより上のレイヤに置く（展開中でも読める）
         var t = document.createElementNS("http://www.w3.org/2000/svg", "text");
         t.setAttribute("x", it.lx.toFixed(1));
@@ -2079,6 +2320,11 @@ var row = sc.closest(".fc-row");
         t.setAttribute("class", (it.loop ? "loop" : "next") +
           (!it.loop && it.endAnchor ? " flip" : "") + (related ? " hl" : (ioSel ? " dimmed" : "")));
         t.setAttribute("data-label", it.edge.source + "|" + it.edge.target);
+        // 検査器が「自分の縁」を厳密に引けるよう、縁そのものの識別子を刻む。
+        // data-label は src|tgt の対だけなので、同じ対で kind が違う縁
+        // （next と loop など）を区別できない（codex P2-4）
+        t.setAttribute("data-edge", it.edge.source + "|" + it.edge.kind + "|" + it.edge.target);
+        t.setAttribute("data-eid", String(ii));
         t.textContent = (it.loop ? "↺ " : "") + it.label;
         lbl.appendChild(t);
         var lrow = lane.querySelector('.step-box[data-node="' + cssEscape(it.edge.source) + '"]');
@@ -2096,7 +2342,6 @@ var row = sc.closest(".fc-row");
       // 中央カードも障害物として避けるのは、行が画面幅に収まりきらない狭い画面だけ
       // （360px でラベルが中央カードの上端に乗った）。広い画面で中央カードまで
       // 避けたとき、代わりに縁の矢印の上へ退避してしまう事例が合成検査で出たため
-      var tight = (lane.parentElement ? lane.parentElement.clientWidth : 1e9) < 900;
       // 矢印を障害物にするのも狭い画面だけ。広い画面では中央カードを数えないので、
       // 矢印まで避けると行き場の無い長い条件ラベルがサイドカードに乗ってしまう
       var arrowObs = tight ? arrows : [];
@@ -2136,6 +2381,43 @@ var row = sc.closest(".fc-row");
       });
       var placed = [];
       var pad = 3;
+      // 縁の描画形状を「ラベルを置いてはいけない場所」として覚える。たたんだ状態の
+      // 折返しラベルの土台が、別の縁のガター縦線を覆った（実測 26 箇所）。
+      // d が変わったときだけ組み直す（スクロール毎の再描画ではタダになる）
+      if (this._lbDirty || !this._lbBuckets) {
+        this._lbBuckets = {};
+        var lbk = this._lbBuckets;
+        var probeP = this._probePath;
+        if (!probeP) {
+          probeP = this._probePath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        }
+        items.forEach(function (it) {
+          if (!it.d) return;
+          if (!it._segs || it._segsD !== it.d) {
+            it._segs = []; it._segsD = it.d;
+            try {
+              probeP.setAttribute("d", it.d);
+              var lnl = probeP.getTotalLength();
+              for (var q2 = 0; q2 < lnl; q2 += 8) {
+                var p0 = probeP.getPointAtLength(q2);
+                var p1 = probeP.getPointAtLength(Math.min(lnl, q2 + 8));
+                it._segs.push([Math.min(p0.x, p1.x) - 1, Math.min(p0.y, p1.y) - 1,
+                  Math.max(p0.x, p1.x) + 1, Math.max(p0.y, p1.y) + 1,
+                  it.edge.source + "|" + it.edge.kind + "|" + it.edge.target]);
+              }
+            } catch (e) { it._segs = []; }
+          }
+          var sgs = it._segs;
+          for (var qs = 0; qs < sgs.length; qs++) {
+            var sg = sgs[qs];
+            for (var ccb = (sg[0] / 64) | 0, cce = (sg[2] / 64) | 0; ccb <= cce; ccb++) {
+              (lbk[ccb] || (lbk[ccb] = [])).push(sg);
+            }
+          }
+        });
+        this._lbDirty = false;
+      }
+      var lineBuckets = this._lbBuckets;
       // 土台（.lbl-bg）の実測矩形どうしの交差。2px の余白を見て、触るだけの重なりは許す
       var cross = function (A, B) {
         return A.x0 < B.x1 - 2 && A.x1 > B.x0 + 2 && A.y0 < B.y1 - 2 && A.y1 > B.y0 + 2;
@@ -2163,6 +2445,16 @@ var row = sc.closest(".fc-row");
           rdx = bb0.x - pad - L.x; rdy = bb0.y - pad - L.y;
           rw = bb0.width + pad * 2; rh = bb0.height + pad * 2;
         } catch (e) { /* 計測できなければ概算値 */ }
+        if (L.x + rdx < 2) {
+          // 事前クランプは概算幅で決めたので、実測の土台が 1〜4px 左へ
+          // はみ出すことがある。そのままだとクランプ条件（x0>=2）が
+          // 縦の退避先まで全部弾いて行き場がなくなる（360px の ↺ が
+          // ±64px 全候補 clamp 拒否で重なったまま固まった）
+          L.x += 2 - (L.x + rdx);
+          L.x0 = L.end ? L.x - len : L.x;
+          L.x1 = L.end ? L.x : L.x + len;
+          L.t.setAttribute("x", L.x.toFixed(1));
+        }
         var rectAt = function (y) {
           return { x0: L.x + rdx, x1: L.x + rdx + rw, y0: y + rdy, y1: y + rdy + rh };
         };
@@ -2178,7 +2470,7 @@ var row = sc.closest(".fc-row");
         // 1=他のラベルを後回し、2=中央カードも後回し、3=サイドカードだけ（従来）。
         // 全部を条件にすると混雑した全展開で行き場が無くなる。HEAD でも同行の
         // ラベル同士は重なっているので、他のラベルは中央カードより後回しにする
-        var fits = function (Rc, off) {
+        var fits = function (Rc, off, lines) {
           // 当たり判定は実測の土台（.lbl-bg）でするので、置き場所は 2px 多めに見て、
           // 1〜2px のすり抜け（カードの上端へのギリギリの寄りかかり）を残さない
           var Rm = { x0: Rc.x0 - 2, y0: Rc.y0 - 2, x1: Rc.x1 + 2, y1: Rc.y1 + 2 };
@@ -2200,15 +2492,31 @@ var row = sc.closest(".fc-row");
               if (cross(Rc, arrowObs[i4])) return false;
             }
           }
+          if (lines) {   // 他の縁の線（自分の縁は除く）の下にも敷かない
+            var Rl = { x0: Rc.x0 - 1, y0: Rc.y0 - 1, x1: Rc.x1 + 1, y1: Rc.y1 + 1 };
+            for (var cb = (Rl.x0 / 64) | 0, ce = (Rl.x1 / 64) | 0, cc = cb; cc <= ce; cc++) {
+              var bsk = lineBuckets[cc];
+              if (!bsk) continue;
+              for (var i7 = 0; i7 < bsk.length; i7++) {
+                var SG = bsk[i7];
+                if (SG[4] === L.key) continue;
+                if (Rl.x1 > SG[0] && Rl.x0 < SG[2] && Rl.y1 > SG[1] && Rl.y0 < SG[3]) return false;
+              }
+            }
+          }
           return true;
         };
-        var ladder = [0, 1, 2, 3];   // 見る相手を減らす順（上のコメント参照）
-        var scan = function (off) {
+        // 見る相手を減らす順。ラベル同士の重なりは検査で必ず違反になる
+        // ので、ラベルを後回し（off&1）にするのはサイドカード・中央カードを
+        // 後回しにした後の最終盤にする（旧順 [0,1,2,3] では 1 段目で他の
+        // ラベルを跨いで重ねた。実測 s004→s000 と s008→s000 の ↺ が 770px 重なり）
+        var ladder = [0, 2, 1, 3];
+        var scan = function (off, lines) {
           for (var d = 1; d <= 64; d++) {
-            if (fits(rectAt(L.y + d), off)) return d;
+            if (fits(rectAt(L.y + d), off, lines)) return d;
           }
           for (var d2 = 1; d2 <= 64; d2++) {
-            if (fits(rectAt(L.y - d2), off)) return -d2;
+            if (fits(rectAt(L.y - d2), off, lines)) return -d2;
           }
           return null;
         };
@@ -2217,9 +2525,16 @@ var row = sc.closest(".fc-row");
           // ループラベル（↺ を含む）は中央カードを数えない（後回し）
           var soft0 = !!L.soft;
           if (!fits(R, soft0 ? 2 : 0)) {
-            for (var li = 0; li < ladder.length; li++) {
-              var mv = scan(ladder[li]);
-              if (mv !== null) { L.y += mv; R = rectAt(L.y); break; }
+            var okLine = false;
+            for (var li = 0; li < ladder.length && !okLine; li++) {
+              var mv = scan(ladder[li], true);
+              if (mv !== null) { L.y += mv; R = rectAt(L.y); okLine = true; }
+            }
+            if (!okLine) {
+              for (var li2 = 0; li2 < ladder.length; li2++) {
+                var mv2 = scan(ladder[li2]);
+                if (mv2 !== null) { L.y += mv2; R = rectAt(L.y); break; }
+              }
             }
           }
         } else {
@@ -2247,6 +2562,144 @@ var row = sc.closest(".fc-row");
             R = rectAt(L.y);
           }
         }
+        // 両モード共通の収束: 配置後にカードと他の縁の線の重なりを確かめ、
+        // 踏んでいれば 2px 刻みで上下→横の順に空きへ寄せる。中央カードを
+        // 障害物に数えるのは狭い画面だけ（上の回避ポリシーと同じ）
+        var laneW = lane.scrollWidth || 1e9;
+        var clearAt = function (y2, dx2) {
+          var R2 = rectAt(y2);
+          if (dx2) { R2.x0 += dx2; R2.x1 += dx2; }
+          if (R2.x0 < 2 || R2.x1 > laneW - 2) return false;
+          var Rm2 = { x0: R2.x0 - 2, y0: R2.y0 - 2, x1: R2.x1 + 2, y1: R2.y1 + 2 };
+          for (var ia = 0; ia < obs.length; ia++) {
+            // サイドカード（soft）も常に障害物。最終検査はラベルの土台と
+            // サイドチップの重なりを必ず違反にするので、回避側も同じ基準で
+            // 探さないといつまでもカードの上に置きっぱなしになる
+            if (L.from && obs[ia].el === L.from) continue;
+            if (cross(Rm2, obs[ia])) return false;
+          }
+          for (var ib = 0; ib < placed.length; ib++) {
+            if (cross(Rm2, placed[ib].rect)) return false;
+          }
+          var Rl2 = { x0: R2.x0 - 1, y0: R2.y0 - 1, x1: R2.x1 + 1, y1: R2.y1 + 1 };
+          for (var cb2 = (Rl2.x0 / 64) | 0, ce2 = (Rl2.x1 / 64) | 0, cc2 = cb2; cc2 <= ce2; cc2++) {
+            var bk2 = lineBuckets[cc2];
+            if (!bk2) continue;
+            for (var ic = 0; ic < bk2.length; ic++) {
+              var S3 = bk2[ic];
+              if (S3[4] === L.key) continue;
+              if (Rl2.y1 > S3[1] && Rl2.y0 < S3[3]) return false;
+            }
+          }
+          return true;
+        };
+        if (!clearAt(L.y, 0)) {
+          var nudged = false;
+          for (var d3 = 2; d3 <= 48 && !nudged; d3 += 2) {
+            if (clearAt(L.y + d3, 0)) { L.y += d3; nudged = true; }
+            else if (clearAt(L.y - d3, 0)) { L.y -= d3; nudged = true; }
+          }
+          // 縦レーンの線は上下に逃げて同じ高さを通るので、束の外側（横）も探す。
+          // 束の幅ぶん（実測 10 本 × 12px = 120px）出ないと線を踏んだままになるため、
+          // 上下の小さな移動と組み合わせて横の空きを 260px まで見る
+          // 縦に逃げ場が無いときは横の空きも探す。展開中はサイド列の外側まで
+          // 滑ると列の右（画面端側）に居場所が無いので探索幅を列の手前まで絞る
+          if (!nudged) {
+            var maxDx = open ? 220 : 260;
+            var dyTry = [0, -8, 8, -16, 16];
+            outer: for (var d4 = 4; d4 <= maxDx; d4 += 4) {
+              for (var yt4 = 0; yt4 < dyTry.length; yt4++) {
+                if (clearAt(L.y + dyTry[yt4], d4)) { L.x += d4; L.y += dyTry[yt4]; nudged = true; break outer; }
+                if (clearAt(L.y + dyTry[yt4], -d4)) { L.x -= d4; L.y += dyTry[yt4]; nudged = true; break outer; }
+              }
+            }
+          }
+          if (nudged) {
+            L.x0 = L.end ? L.x - len : L.x;
+            L.x1 = L.end ? L.x : L.x + len;
+            L.t.setAttribute("x", L.x.toFixed(1));
+            L.t.setAttribute("y", L.y.toFixed(1));
+          }
+          R = rectAt(L.y);
+        }
+        // ファン縁・短い縁の終端錨ラベルが宛先カードに乗ったら左へ滑らせる。
+        // 宛先カードは矢印の着地面なので下げても逃げ場がない（たたむと上端に
+        // 76% のせたままになった）。たためば左側に余白が出るので線の途中に添える
+        if (L.end && L.to && L.to.isConnected) {
+          var tr = L.to.getBoundingClientRect();
+          var tx0 = tr.left - box.left, tx1 = tr.right - box.left;
+          var ov = Math.min(R.x1, tx1) - Math.max(R.x0, tx0);
+          if (ov > (R.x1 - R.x0) * 0.3 && R.y0 < tr.bottom - box.top && R.y1 > tr.top - box.top) {
+            // まず宛先カードの「上」の空き帯へ押し上げる。矢印の真上だと矢じりを
+            // 隠すので、縦線から左へ外れた位置に置く（自分の線は下敷きにしてよい）
+            var btC = tr.top - box.top;
+            var yUp = btC - 2 - rdy - rh;
+            var movedUp = false;
+            if (yUp < L.y) {
+              // 空き帯は幅が広い。同じ出所・宛先の縁（next と branch）が重なるときは
+              // 帯の中で左右にもずらす（縦だけだと先に置いたラベルとぶつかった）
+              for (var dxU = 0; dxU <= 160 && !movedUp; dxU += 8) {
+                var xU = L.x - dxU;
+                var uR = { x0: xU + rdx, x1: xU + rdx + rw, y0: yUp + rdy, y1: yUp + rdy + rh };
+                if (uR.x0 < 8) break;
+                var fitsUp = fits(uR, 0, true);
+                if (!fitsUp) {
+                  // 縦方向も ±10px 動かして帯の中の空きを探す
+                  for (var dyU = 4; dyU <= 10 && !fitsUp; dyU += 2) {
+                    if (fits({ x0: uR.x0, x1: uR.x1, y0: uR.y0 - dyU, y1: uR.y1 - dyU }, 0, true)) {
+                      uR.y0 -= dyU; uR.y1 -= dyU; fitsUp = true;
+                    } else if (fits({ x0: uR.x0, x1: uR.x1, y0: uR.y0 + dyU, y1: uR.y1 + dyU }, 0, true)) {
+                      uR.y0 += dyU; uR.y1 += dyU; fitsUp = true;
+                    }
+                  }
+                }
+                if (fitsUp) {
+                  L.x = xU;
+                  L.x0 = L.end ? L.x - len : L.x;
+                  L.x1 = L.end ? L.x : L.x + len;
+                  L.y = uR.y0 - rdy;
+                  L.t.setAttribute("x", L.x.toFixed(1));
+                  L.t.setAttribute("y", L.y.toFixed(1));
+                  R = uR;
+                  movedUp = true;
+                }
+              }
+            }
+            var nx = tx0 - 6 - rdx - rw;
+            if (!movedUp && nx >= 8) {
+              var nR = { x0: nx + rdx, x1: nx + rdx + rw, y0: R.y0, y1: R.y1 };
+              var clash = false;
+              for (var i9 = 0; i9 < obs.length; i9++) {
+                if (obs[i9].soft || (L.from && obs[i9].el === L.from)) continue;
+                if (cross(nR, obs[i9])) { clash = true; break; }
+              }
+              if (!clash) {
+                for (var i10 = 0; i10 < placed.length; i10++) {
+                  if (cross(nR, placed[i10].rect)) { clash = true; break; }
+                }
+              }
+              if (!clash) {   // 左へ滑らせた先が他の縁の線でなければ
+                var Rl4 = { x0: nR.x0 - 1, y0: nR.y0 - 1, x1: nR.x1 + 1, y1: nR.y1 + 1 };
+                for (var cb4 = (Rl4.x0 / 64) | 0, ce4 = (Rl4.x1 / 64) | 0, cc4 = cb4; cc4 <= ce4; cc4++) {
+                  var bk4 = lineBuckets[cc4];
+                  if (!bk4) continue;
+                  for (var id4 = 0; id4 < bk4.length; id4++) {
+                    var S4 = bk4[id4];
+                    if (S4[4] === L.key) continue;
+                    if (Rl4.x1 > S4[0] && Rl4.x0 < S4[2] && Rl4.y1 > S4[1] && Rl4.y0 < S4[3]) { clash = true; break; }
+                  }
+                  if (clash) break;
+                }
+              }
+              if (!clash) {
+                L.x = nx;
+                L.x0 = L.x - len; L.x1 = L.x;
+                L.t.setAttribute("x", L.x.toFixed(1));
+                R = nR;
+              }
+            }
+          }
+        }
         L.rect = R;
         L.t.setAttribute("y", L.y.toFixed(1));
         // 文字の直下に淡い土台（他レイヤと重なっても読める）。回避に使った実矩形そのもの
@@ -2257,7 +2710,137 @@ var row = sc.closest(".fc-row");
         bg.setAttribute("height", (R.y1 - R.y0).toFixed(1));
         bg.setAttribute("rx", "3");
         lbl.insertBefore(bg, L.t);
+        L.bg = bg;
+        L.rdx = rdx; L.rdy = rdy; L.rw = rw; L.rh = rh;
         placed.push(L);
+      });
+      // 最終保証: どの回避段を抜けてもラベルの土台が重なっていたら、後から
+      // 置いた方を下→上→左右へ押し出す。回避ラダーは混雑した着地帯では
+      // ±64px で尽き、左端クランプが同じ x に寄せた ↺ 同士が重ねた
+      // （360px 実測: s004→s000 と s008→s000 が 770px 重なり）
+      var laneW2 = lane.scrollWidth || 1e9;
+      var rectOf2 = function (Lb, yb, dxb) {
+        return { x0: Lb.x + dxb + Lb.rdx, x1: Lb.x + dxb + Lb.rdx + Lb.rw,
+                 y0: yb + Lb.rdy, y1: yb + Lb.rdy + Lb.rh };
+      };
+      var freeOf2 = function (Lb, Rx) {
+        if (Rx.x0 < 2 || Rx.x1 > laneW2 - 2) return false;
+        for (var q = 0; q < placed.length; q++) {
+          if (placed[q] !== Lb && cross(Rx, placed[q].rect)) return false;
+        }
+        for (var q2 = 0; q2 < obs.length; q2++) {
+          var Oq = obs[q2];
+          if (Lb.from && Oq.el === Lb.from) continue;
+          if (Lb.soft && Oq.soft) continue;
+          // 検査は「他人カード」への寄りかかりだけを見る（自分の出所・宛先
+          // の行の内側は土台で覆ってよい設計）。保証段でも同じ基準にしないと、
+          // 宛先行の混雑帯でラベルが縦の空きを見つけられない（360px 実測:
+          // s000 の行内チップ [60,202,144,229] が上方向の退避を全部弾いた）
+          if (Lb.soft && Oq.el &&
+              ((Lb.to && (Oq.el === Lb.to || Lb.to.contains(Oq.el))) ||
+               (Lb.from && (Oq.el === Lb.from || Lb.from.contains(Oq.el))))) continue;
+          // 検査基準は「他人カード」。同じ行でも別ノード（store:table の IO など）は
+          // 除外しない（行まるごと除外だと 28% のせり上がりを出した）
+          if (cross(Rx, Oq)) return false;
+        }
+        var Rq = { x0: Rx.x0 - 1, y0: Rx.y0 - 1, x1: Rx.x1 + 1, y1: Rx.y1 + 1 };
+        for (var cbq = (Rq.x0 / 64) | 0, ceq = (Rq.x1 / 64) | 0, ccq = cbq; ccq <= ceq; ccq++) {
+          var bq = lineBuckets[ccq];
+          if (!bq) continue;
+          for (var iq = 0; iq < bq.length; iq++) {
+            var Sq = bq[iq];
+            if (Sq[4] === Lb.key) continue;
+            if (Rq.x1 > Sq[0] && Rq.x0 < Sq[2] && Rq.y1 > Sq[1] && Rq.y0 < Sq[3]) return false;
+          }
+        }
+        return true;
+      };
+      for (var gg = 0; gg < 12; gg++) {
+        var ov = null;
+        for (var ai = 0; ai < placed.length && !ov; ai++) {
+          for (var bi2 = ai + 1; bi2 < placed.length; bi2++) {
+            if (cross(placed[ai].rect, placed[bi2].rect)) { ov = placed[bi2]; break; }
+          }
+        }
+        if (!ov) break;
+        var ny = null, ndx = 0, movedB = false;
+        for (var gd = 2; gd <= 64 && !movedB; gd += 2) {
+          if (freeOf2(ov, rectOf2(ov, ov.y + gd, 0))) { ny = ov.y + gd; movedB = true; }
+          else if (freeOf2(ov, rectOf2(ov, ov.y - gd, 0))) { ny = ov.y - gd; movedB = true; }
+        }
+        // 横は左右の両方向。同じ高さの他人ラベルの列が幅ぶん（実測 300px 超）
+        // 続いていることがあり、220px では両端を抜けられなかった（360px 実測）
+        for (var gx2 = 4; gx2 <= 460 && !movedB; gx2 += 4) {
+          if (freeOf2(ov, rectOf2(ov, ov.y, gx2))) { ny = ov.y; ndx = gx2; movedB = true; }
+          else if (freeOf2(ov, rectOf2(ov, ov.y, -gx2))) { ny = ov.y; ndx = -gx2; movedB = true; }
+        }
+        if (!movedB) {   // 縦横単独で空かないなら combinations
+          var dyTry2 = [-20, 20, -36, 36, -52, 52];
+          outer2: for (var gd2 = 0; gd2 < dyTry2.length; gd2++) {
+            for (var gx3 = -460; gx3 <= 460; gx3 += 20) {
+              if (freeOf2(ov, rectOf2(ov, ov.y + dyTry2[gd2], gx3))) {
+                ny = ov.y + dyTry2[gd2]; ndx = gx3; movedB = true; break outer2;
+              }
+            }
+          }
+        }
+        if (!movedB) break;
+        ov.x += ndx; ov.y = ny;
+        ov.rect = rectOf2(ov, ov.y, 0);
+        ov.x0 = ov.rect.x0 + 3; ov.x1 = ov.rect.x1 - 3;
+        ov.t.setAttribute("x", ov.x.toFixed(1));
+        ov.t.setAttribute("y", ov.y.toFixed(1));
+        if (ov.bg) {
+          ov.bg.setAttribute("x", ov.rect.x0.toFixed(1));
+          ov.bg.setAttribute("y", ov.rect.y0.toFixed(1));
+        }
+      }
+      // 矢じり保険: どの段を抜けてもラベルの土台が他人の縁の矢じり（終端 10px の
+      // 点列）に乗っていたら、保証段と同じ障害物方針 + 矢じりの空きで退避させる。
+      // 矢印の先が隠れると「どこに着く縁か」が読めなくなる（たたみ 1440 実測:
+      // s008 の戻る矢じりに s000 の別条件ラベルが 12px のった）。自分の縁の
+      // 矢じりは許容（end 錨のラベルは自分の着地帯に置く設計）
+      var arrowFree2 = function (Lb, Rx) {
+        for (var aq = 0; aq < arrows.length; aq++) {
+          var Aq = arrows[aq];
+          if (Aq.k === Lb.key) continue;
+          if (Rx.x1 > Aq.x0 && Rx.x0 < Aq.x1 && Rx.y1 > Aq.y0 && Rx.y0 < Aq.y1) return false;
+        }
+        return true;
+      };
+      placed.forEach(function (Lb) {
+        if (!Lb.rect || arrowFree2(Lb, Lb.rect)) return;
+        var nyA = null, ndxA = 0, okA = false;
+        var tryA = function (yb, dxb) {
+          var Rx = rectOf2(Lb, yb, dxb);
+          if (!freeOf2(Lb, Rx) || !arrowFree2(Lb, Rx)) return false;
+          nyA = yb; ndxA = dxb; okA = true;
+          return true;
+        };
+        for (var ad = 2; ad <= 64 && !okA; ad += 2) {
+          if (tryA(Lb.y + ad, 0) || tryA(Lb.y - ad, 0)) break;
+        }
+        for (var ax = 4; ax <= 460 && !okA; ax += 4) {
+          if (tryA(Lb.y, ax) || tryA(Lb.y, -ax)) break;
+        }
+        if (!okA) {
+          var dyTry3 = [-20, 20, -36, 36];
+          outer3: for (var ady = 0; ady < dyTry3.length; ady++) {
+            for (var adx = -460; adx <= 460; adx += 20) {
+              if (tryA(Lb.y + dyTry3[ady], adx)) break outer3;
+            }
+          }
+        }
+        if (!okA) return;
+        Lb.x += ndxA; Lb.y = nyA;
+        Lb.rect = rectOf2(Lb, Lb.y, 0);
+        Lb.x0 = Lb.rect.x0 + 3; Lb.x1 = Lb.rect.x1 - 3;
+        Lb.t.setAttribute("x", Lb.x.toFixed(1));
+        Lb.t.setAttribute("y", Lb.y.toFixed(1));
+        if (Lb.bg) {
+          Lb.bg.setAttribute("x", Lb.rect.x0.toFixed(1));
+          Lb.bg.setAttribute("y", Lb.rect.y0.toFixed(1));
+        }
       });
       // 上下へ退避してもサイドカード（注釈チップ込み）と空かないラベルは、その行の
       // 行間を広げてから測り直す（I/O の多いデータでは退避先が尽くされるため）。
@@ -2447,19 +3030,27 @@ var row = sc.closest(".fc-row");
     var f = o.fan || 0, ch = o.chan || 0;
     var left = o.side === "left", up = !!o.up;
     var open = (o.gBase || 30) <= 14;
-    // 展開中は行き縁（戻る縁でない前方の縁）に通路を使わない。サイド列が左右を占める
-    // ので通路を外へ広げるとカードの上に出て、正面進入も側面進入もできなくなる。
-    if (open && !up && !o.self && !o.vert) ch = 0;
+    // 展開中の長い行き縁はサイド列の外側の余白を走る専用通路を使う（余白は
+    // buildEdges で確保）。たたま時と同じ通路を潰して共有していたとき、長い
+    // 行き縁 10 本が同じ縦線で重なった（実測 parallel 220）。短い縁は通路不要。
+    // 展開中の前方縁は中央ガター内側のファンに閉じ込める。サイド列の外側へ
+    // 回すとラベル着地点（gx 基準）がサイドカードの上に乗り、検査合同で落ちる。
+    // ただし行をまたぐ長い縁（同じ宛先へ 10 本収束など）は正面・側面のどちらでも
+    // 刻みきれず同じ場所に潰れる（実測 entryClash 45）ので専用通路を使う
+    if (open && !up && !o.self && !o.vert) ch = o.dstGw ? 0 : (o.chanFwd || 0);
     // 展開中は戻る縁だけが通路を使うので、戻る縁だけで詰めた番号と本数で刻む
     // （行き縁を混ぜた first-fit だと laneCount が膨らみ、ピッチ除数が過大になって
     // 実際に縦線を描く戻る縁が同じ x に潰れる。実測 610 セル）。
     if (open && up) { ch = o.chanBack || 0; }
-    var lc = open ? (o.laneCountBack || 0) : (o.laneCount || 0);
+    var lc = !open ? (o.laneCount || 0)
+      : (up ? (o.laneCountBack || 0) : (o.laneCountFwd || 0));
     // 進入点の刻み: 同じ宛先へ n 本集まるとき正面辺(幅 bw、440px 級)は 9px で入り切る。
     // 側面へ回る場合は辺の高さが 59px 級なので、幅 ÷ 本数へ縮めないとクランプで
     // 折り返して先端が同じ y に潰れる（s119 収束 82 セル）。側面用は bh が分かる箇所で作り直す。
     var arrC = o.arrCount || 0, arrI = o.arr || 0;
-    var arrOff = arrC > 1 ? (arrI - (arrC - 1) / 2) * Math.min(9, (o.bwGuess || 440) / arrC) : 0;
+    // 間隔は矢じりの幅（マーカー 7 単位 ≈ 11px）より広く取る。9px だと先端同士が
+    // 4px 以上重なる（実測 arrowClash）。
+    var arrOff = arrC > 1 ? (arrI - (arrC - 1) / 2) * Math.min(14, (o.bwGuess || 440) / arrC) : 0;
     // 通路ピッチは本数で自動縮小する。30px 固定で深い通路まで確保するとガター幅を
     // 越えて clampX で折り返され、いちばん外側の何本かが同じ x に潰れて重なる
     // （実測 1515 セル）。中央カード外側〜レーン端までの空き ÷ 本数に縮める。
@@ -2471,6 +3062,10 @@ var row = sc.closest(".fc-row");
     // だけの x 基準だと、途中の広いカードの内部を縦線が走って貫通する（実測 54px pierce）。
     var bandT = Math.min(at, bt), bandB = Math.max(ab, bb);
     var spanL = Math.min(ax, bx), spanR = Math.max(ax + aw, bx + bw);
+    // others の拡張で spanR は帯内の最広カードまで膨らむ。通路・窓の判定を
+    // これに重ねると、列の右端が spanR に同化して全部こぼれ、狭い窓のまま
+    // 旋回が列頭を刺す（実測 360px）。中央スパンの実値を別に持つ
+    var spanR0 = Math.max(ax + aw, bx + bw), spanL0 = Math.min(ax, bx);
     if (o.others) {
       for (var oi = 0; oi < o.others.length; oi++) {
         var q = o.others[oi];
@@ -2486,16 +3081,31 @@ var row = sc.closest(".fc-row");
     // たたみ時はレーン端まで空いているが、展開時はサイドカードが幅を取るのでその
     // 外側には出せない（出るとサイドカードを貫き、正面・側面どちらにも進入できない）。
     var leftBound = null, rightBound = null;   // 縦区間に重なるサイドカードの左右境界
+    var sideRightMax = null, sideLeftMin = null;   // サイド列の外縁（回り込み通路の基準）
+    var sideRightOver = null;                       // 中央スパンに重なる右側カードを含む外縁
     if (open && o.sideCards) {
       for (var si = 0; si < o.sideCards.length; si++) {
         var sd = o.sideCards[si];
         if (sd.y1 <= bandT || sd.y0 >= bandB) continue;
-        if (sd.x1 <= spanL) leftBound = leftBound === null ? sd.x1 : Math.max(leftBound, sd.x1);
-        if (sd.x0 >= spanR) rightBound = rightBound === null ? sd.x0 : Math.min(rightBound, sd.x0);
+        if (sd.x1 <= spanL) {
+          leftBound = leftBound === null ? sd.x1 : Math.max(leftBound, sd.x1);
+          sideLeftMin = sideLeftMin === null ? sd.x0 : Math.min(sideLeftMin, sd.x0);
+        }
+        if (sd.x0 >= spanR) {
+          rightBound = rightBound === null ? sd.x0 : Math.min(rightBound, sd.x0);
+          sideRightMax = sideRightMax === null ? sd.x1 : Math.max(sideRightMax, sd.x1);
+        }
+        // 回り込み通路は「中央スパンより右にはみ出すカード」の全部を避けたい。
+        // x0 ≥ spanR だけだと、others の拡張で spanR がカード内に入る行の広い
+        // カードが抜け、通路がその端を刺す（実測 360px で 14px）
+        if (sd.x1 > spanR0 + 4) sideRightOver = sideRightOver === null ? sd.x1 : Math.max(sideRightOver, sd.x1);
       }
     }
-    var outerL = leftBound === null ? 10 : leftBound + 4;   // 左ガターが使える最小 x
-    var outerR = rightBound === null ? clampW - 10 : rightBound - 4;   // 右ガターの最大 x
+    // 離間は矢じりの長さぶん（マーカー 7 単位 ≈ 11px + 余裕）。4px だと通路を走る
+    // 縦線がサイドカードの矢じり zone を突き抜け、reads/writes の先端に線が刺さる
+    // （実測 arrowOnLine 192）。
+    var outerL = leftBound === null ? 10 : leftBound + 16;   // 左ガターが使える最小 x
+    var outerR = rightBound === null ? clampW - 10 : rightBound - 16;   // 右ガターの最大 x
     // 通路幅 ÷ 本数でピッチを決める。固定 30px だと本数が通路を越え、clampX で
     // 折り返されて外側の何本かが同じ x に潰れる（実測 1515 セル）。
     var chan = left ? (spanL - base - outerL) : (outerR - spanR - base);
@@ -2516,7 +3126,17 @@ var row = sc.closest(".fc-row");
       // ひし形の辺に沿ってずらす（頂点から水平に離れる分、上下頂点へ寄せる）
       var ay = ab - Math.min(ah / 2, Math.abs(sx) * (ah / bw));
       var by = bt + Math.min(bh / 2, Math.abs(sx) * (bh / bw));
-      if (vf === 0) { ay = ab; by = bt; }
+      // 1 直下だけのときは頂点から真下。同じゲートウェイから回り込み縁も
+      // 出るときは（上の srcSeq が vert を数える）頂点上の辺に沿って刻む
+      if (vf === 0 && o.outCount > 1 && o.sideCards.length) {
+        // 同じひし形から回り込み縁も出るとき（上の srcSeq が vert を数える）、
+        // 頂点直下の直下げが回り込みの降り線と重なる（実測並走 34px）。
+        // 出所を下辺に沿って刻むが、終端は上頂点のまま（検査: 終端は頂点、
+        // 水平成分 20% 未満）
+        sx = ((o.outI || 0) - (o.outCount - 1) / 2) * Math.max(14, Math.min(22, (bw - 16) / (o.outCount - 1)));
+        ax2 = acx + sx;
+        ay = ab - Math.min(ah / 2, Math.abs(sx) * (ah / bw));
+      }
       return {
         d: "M" + ax2 + "," + ay + " C" + ax2 + "," + (ay + dv) + " " + bx2 + "," + (by - dv) + " " + bx2 + "," + by,
         tan: 90, face: "down", keepX: true, end: false,
@@ -2530,22 +3150,195 @@ var row = sc.closest(".fc-row");
     // ゲートウェイ経路に比べ、中央直下は条件ラベル（頂点の上に出る）と終端が同じ柱に
     // 重なる（合成検査 s2→s3 の「経路B」ラベルに矢印が刺さる）。
     if (o.near && !up && !o.self && !o.dstGw) {
-      var nxS = bcx + arrOff;
+      // 出所がひし形（ゲートウェイ）のとき、着地を中央（＝下頂点と同じ列）に
+      // 置くと、同じ頂点から降りる回り込み縁の縦線と同じ列に重なる。360px 実測:
+      // s084 のドロップ（出口を扇で −11 に刻み、中央 bcx へ曲線で戻る）が
+      // 頂点列 x538 に到達する高さと、回り込みの降り区間が重なり 10px 並走した
+      // （s084/s100/s112/s116 の 4 組）。頂点列から左へ退避させる
+      var nxS = bcx + arrOff - (o.srcGw ? 16 : 0);
       var ndv = Math.max(9, Math.min(26, (bt - ab) * 0.45));
+      // 同じ出所・同じ宛先の重複縁（条件違いで同じ行き先）は出る点も入る点も
+      // 同じになる。同じ点から始めると数 px 進んだ先まで重なる（実測 entryClash 10）。
+      // 下の遠方縁と同じ考え方で行き縁の連番ぶん刻む。
+      var nOcc = o.outCount || 0;
+      var nsx = acx, ncx = acx, ncy = ab + ndv;
+      if (nOcc > 1) {
+        // 矩形カードは出る点そのものを刻む。ひし形は頂点共有が仕様（頂点直結
+        // ルール）なので刻まない（実測: ±11 の刻み出所が頂点規則を破り、なお
+        // かつ双子の曲線が回り込み縁の頂列縦線に 16px 並走した）。ひし形の
+        // 双子は最初の手前に着地側の制御点を置いて頂点から即座に着地方向へ
+        // 逸れさせ、頂列を降りる縦線を作らない（宛先側ファンが着地を刻む）
+        if (o.srcGw) {
+          // 着地は回り込み縁が頂列帯へ降りる縦線（頂点から左へ 16px 退避させた
+          // 列や、その左の刻み列）と列を重ねない。双方向に刻んだ左側がちょうど
+          // その列に落ちて 32px 並走した（実測 s000 双子 × s004 の戻り）。
+          // 帯の着地を「頂列−16 〜 頂列−9」の安全窓へ寄せる
+          var nxLo = bcx - 16, nxHi = bcx - 9;
+          if (nxS < nxLo) nxS = nxLo + Math.max(0, o.outI || 0) * 7;
+          if (nxS > nxHi) nxS = nxHi;
+          if (nxS > nxLo && nxS - nxLo < 6) nxS = nxLo;
+          ncx = nxS; ncy = ab + ndv * 0.45;
+        }
+        else nsx += ((o.outI || 0) - (nOcc - 1) / 2) * Math.max(14, Math.min(22, (aw - 16) / (nOcc - 1)));
+      }
       return {
-        d: "M" + acx + "," + ab + " C" + acx + "," + (ab + ndv) + " " + nxS + "," + (bt - ndv) + " " + nxS + "," + bt,
-        tan: 90, face: "down", keepX: true, end: true, lx: Math.min(acx, nxS) - 8, ly: (ab + bt) / 2,
+        d: "M" + nsx + "," + ab + " C" + ncx + "," + ncy + " " + nxS + "," + (bt - ndv) + " " + nxS + "," + bt,
+        tan: 90, face: "down", keepX: true, end: true, lx: Math.min(nsx, ncx, nxS) - 8, ly: (ab + bt) / 2,
       };
+    }
+
+    // 展開中の行をまたぐ長い縁: サイド列を回り込み、宛先行の下の空き帯から下面へ
+    // 進入する。通路はサイド列の外側の余白（左右）。サイド列との 20px 通路に詰め
+    // ると縦線が同じ x に潰れ（実測 parallel 202）、帯を貫けばサイドカードを刺す
+    // （実測 pierce 6）。空き帯は行の幅ぶん全幅に空いている唯一の通路。
+    if (open && !o.self && !o.vert && !o.near && o.srcRowB != null && o.dstRowB != null) {
+      var rBotS = o.srcRowB, rBotT = o.dstRowB;
+      if (up) {
+        if (!o.vert) {
+          var kN = Math.max(1, o.laneCountBack || 1);
+          var kIdx = o.chanBack || 0;
+          var gxK = Math.max(10, (sideLeftMin === null ? 10 : sideLeftMin - 14) - kIdx * 12);
+          var xd = leftBound === null ? (ax - 12) : (leftBound + ax) / 2;
+          var kY = rBotT + 14 + (kN - 1 - kIdx) * 16;
+          // 退回縁の下面進入は行下帯から縦に上がる。隣接の行き縁も同じ頂点から
+          // 下に伸びるので、刻みを矢じりの半幅+余裕（22px）以上にしないと
+          // 行き縁の線が矢じりに触れる（実測 16 刻みで矢じり縁から 1.8px）
+          var exK = o.dstGw ? bcx + (kIdx - (kN - 1) / 2) * 22
+                            : bx + bw * (0.38 - 0.30 * (kN > 1 ? kIdx / (kN - 1) : 0.5));
+          var krx = Math.max(10, Math.min(30, Math.abs(exK - xd) * 0.25));
+          var dK = "M" + ax + "," + acy +
+            " C" + (ax - 14) + "," + acy + " " + xd + "," + (acy + 16) + " " + xd + "," + (ab + 6) +
+            " L" + xd + "," + (rBotS + 4) +
+            " C" + xd + "," + (rBotS + 14) + " " + gxK + "," + (rBotS + 14) + " " + gxK + "," + (rBotS + 24) +
+            " L" + gxK + "," + (kY + 10) +
+            " C" + gxK + "," + kY + " " + (exK - krx) + "," + kY + " " + exK + "," + kY +
+            " L" + exK + "," + (bb + 5) + " L" + exK + "," + bb;
+          return { d: dK, tan: -90, face: "up", keepX: true, end: true,
+            rowGap: (kY - rBotT) + 26, lx: gxK - 8, ly: kY - 9 };
+        }
+      } else if (o.laneUsed && !o.dstGw && sideRightMax !== null) {
+        // sideRightMax が null の窄幅状態（サイド列が中段下に積まれる）では、
+        // 外側の縦通路そのものが無いので通常経路に落とす（実測 360px で
+        // clamp 折返し 704px の縦線が積みカードを全貫通した）
+        var fN = Math.max(1, o.laneCountFwd || 1);
+        var fIdx = o.chanFwd || 0;
+        var exF = o.dstGw ? bcx + 30 + fIdx * Math.min(24, (bw / 2 - 46) / Math.max(1, fN - 1))
+          : bx + bw * (0.60 + 0.32 * (fN > 1 ? fIdx / (fN - 1) : 0.5));
+        // 段ピッチは通路ピッチ (12) より広めに開ける。16 だと隣レーンの旋回
+        // 曲線が 2px 格子で共有セルを持つ（実測 big s108/s112 の着地曲線 px12）
+        var yyF = rBotT + 14 + (fN - 1 - fIdx) * 20;
+        // サイド列があるとき gxW を clampW で頭打ちすると、列の右端より内側
+        // に戻されて縦線がカードの縁を刺す（実測 1054 で 94px 貫通）。列の
+        // 外側 +14 はレーン min-width が保証するので clamp しない。列が無い
+        // ときだけ clamp 内側に寄せる
+        var gxW = sideRightOver === null
+          ? Math.max(spanR + base, Math.min(clampW - 14, clampW - 14 + fIdx * 12))
+          : Math.max(spanR + base, sideRightOver + 14 + fIdx * 12);
+        var sxO = acx;
+        var ocF = o.outCount || 0;
+        // ひし形の出所は必ず下頂点の真下（検査規則）。扇で刻むと頂点から
+        // 外れる。同じゲートウェイに回り込みが 2 本ある場合は頂点が一点なので
+        // 刻めないが、行区間が重ならなければ降り線は当たらない（実測 0）。
+        // ゲートウェイ以外（角丸カード）は下辺を刻んでよい
+        // 出口扇はサイド列の有無に限らず、同じ出所に複数出口があるなら刻む。
+        // 360px 実測: サイド列のない行の回り込みが扇なしで中央 x に出たため、
+        // −11 にずれた隣接ドロップ縁の曲線（中央へ戻ってくる）と同じ列に
+        // 重なり、降り始め 10px が並走した
+        if (ocF > 1 && !o.srcGw && o.sideCards.length) sxO += ((o.outI || 0) - (ocF - 1) / 2) * Math.max(14, Math.min(22, (aw - 16) / (ocF - 1)));
+        var krf = Math.max(10, Math.min(34, Math.abs(gxW - exF) * 0.3));
+        // 旋回の峰（yyF − krf）が宛先行のサイド列の下端より上だと、曲がりの
+        // 右上が列の下端際を斜めに刺す（実測 pierce 72）。峰を列下端+4 より
+        // 下へ下げ、そこから立ち上げる（krf を縮める）
+        var colB = -1e9;
+        for (var ci = 0; ci < o.sideCards.length; ci++) {
+          var cd = o.sideCards[ci];
+          if (cd.x1 <= exF + 8 || cd.y0 >= yyF + 6 || cd.y1 <= yyF - 64) continue;
+          colB = Math.max(colB, cd.y1);
+        }
+        if (colB > -1e8) krf = Math.min(krf, Math.max(6, yyF - colB - 4));
+        // ひし形の右下辺に乗るため、終端は辺の実 y（行下帯から上へ戻して辺に立てる）
+        var yF = o.dstGw ? bcy + (bx + bw - exF) * bh / bw : bb;
+        // 旋回の横走りは自行直下を抜けるが、自行のサイド列は行下へ約 12px
+        // はみ出し、次行の列は行上へ約 12px 食い込む（maxHeight 中段+24 の
+        // 上下中央寄せ）。窓を実測し、狭ければ自行の行下余白（srcGap）を広げて
+        // 次の再測定で抜ける（+14 固定は自行列に当たり、+22 固定は次行列に
+        // 刺さった実測あり）
+        // 旋回の水平走 y と、自行行下余白の要求を決める。障害カードを
+        // 「自行のカード（行下余白を広げても動かない）」と「他行のカード
+        // （余白だけ広げると下へ逃げる）」に分けて数えるのが要点。
+        // ・自行の列カードは中段より高いと行下へはみ出す（実測 rBotS+54 まで、
+        //   flow order-events 刺し 16px）。水平走は必ずその下に置く。
+        // ・他行のカード（段カード込み）が窓の上限。窄幅では列と中段が縞に
+        //   なるので列だけで探すと中段のうえで水平走した（実測 360px で
+        //   retry-gate 刺し 100px）。
+        // ・降り列（出所と同じ x）を通る他行の段カードは水平走をその上に
+        //   置かないと降り線が刺す（実測 360px で charge 刺し 112px）。
+        // 窓が 16px 足りないぶんは行下余白の「増加量」として要求する。
+        // 次行列は広げたぶんだけ下へ逃げるので絶対値だと cur < req が偽に
+        // なって窓が凍った（実測 2.4px のまま刺さり続けた）
+        var yLow = rBotS + 6;
+        var winLo = 1e9;
+        var allC = o.others ? o.sideCards.concat(o.others) : o.sideCards;
+        for (var wi = 0; wi < allC.length; wi++) {
+          var wd2 = allC[wi];
+          if (wd2.y1 <= rBotS + 2) continue;
+          var inSweep = wd2.x1 > Math.min(sxO, gxW) + 2 && wd2.x0 < Math.max(sxO, gxW) - 2;
+          var inDesc = wd2.x0 < sxO - 2 && wd2.x1 > sxO + 2 && wd2.y0 > ab + 4;
+          if (!inSweep && !inDesc) continue;
+          var isOwn = !!(o.srcRow && wd2.el && wd2.el.closest && wd2.el.closest(".fc-row") === o.srcRow);
+          if (isOwn) {
+            if (inSweep && wd2.y1 > yLow && wd2.y0 < rBotS + 60) yLow = wd2.y1 + 6;
+          } else {
+            var yl3 = wd2.y0 <= rBotS + 2 ? wd2.y1 : wd2.y0;
+            if (inSweep && yl3 < winLo) winLo = yl3;
+            if (inDesc && wd2.y0 - 6 < winLo) winLo = wd2.y0 - 6;
+          }
+        }
+        var srcGapReq = winLo - yLow < 16 && winLo < 1e8 ? yLow + 16 - winLo : 0;
+        var yS = winLo - yLow >= 16 ? (yLow + winLo) / 2 : yLow + 8;
+        if (yS > yyF - 14) yS = Math.max(yLow + 8, yyF - 14);
+        // 降り口と水平走の角は 2 次ベジェの四角。制御点を yS−8 に置く 3 次
+        // ベジェは水平走の直前で 6px ほど上へ膨らみ、上の窓で置いた yS が
+        // 数 px で埋もれて上のカードを刺した（実測 len 16）。四角なら yS を
+        // 越えない。幅が足りないときは角半径を縮める
+        var rrS = Math.max(0, Math.min(6, Math.abs(gxW - sxO) / 2, Math.abs(yyF - krf - yS) / 2));
+        var sgnS = gxW >= sxO ? 1 : -1;
+        var sgnK = yyF - krf >= yS ? 1 : -1;
+        var dF = "M" + sxO + "," + ab +
+          " L" + sxO + "," + (yS - rrS * sgnK) +
+          (rrS > 0 ? " Q" + sxO + "," + yS + " " + (sxO + rrS * sgnS) + "," + yS : "") +
+          " L" + (gxW - rrS * sgnS) + "," + yS +
+          (rrS > 0 ? " Q" + gxW + "," + yS + " " + gxW + "," + (yS + rrS * sgnK) : "") +
+          " L" + gxW + "," + (yyF - krf) +
+          " C" + gxW + "," + yyF + " " + (exF + krf) + "," + yyF + " " + exF + "," + yyF +
+          " L" + exF + "," + (yF + 5) + " L" + exF + "," + yF;
+        return { d: dF, tan: yyF > yF ? -90 : 90, face: yyF > yF ? "up" : "down", keepX: true, end: true,
+          rowGap: (yyF - rBotT) + 26, srcGap: srcGapReq, lx: Math.min(gxW, exF) - 8, ly: yyF - 9 };
+      }
     }
 
     // 自分自身に戻る縁: 左頂点から出て左側で半周し、左辺（上寄り）へ水平に戻る
     if (o.self) {
+      if (o.dstGw && open && o.sideCards && o.sideCards.length) {
+        // 展開したゲートウェイの自分ループ: 左右の頂点付近は IO 矢印の着地点で、
+        // 横の回り込みは必ず交差する（実測で矢印が読み取り線に刺さった）。
+        // ひし形のうえ辺をまたぐ/arch に回し、IO の届かない上から出す。
+        var p1x = bx + (acx - bx) * 0.70, p1y = acy + (bt - acy) * 0.70;
+        var p2x = (bx + bw) - ((bx + bw) - acx) * 0.70, p2y = p1y;
+        var yA = Math.max(14, bt - 18);
+        var dA = "M" + p1x + "," + p1y +
+          " C" + (p1x - 6) + "," + (p1y - 30) + " " + (acx - 60) + "," + yA + " " + acx + "," + yA +
+          " C" + (acx + 60) + "," + yA + " " + (p2x + 2) + "," + (p2y - 34) + " " + p2x + "," + p2y;
+        return { d: dA, tan: 90, face: "down", keepX: false, end: true, lx: acx - 26, ly: yA - 20 };
+      }
       // 自分ループの縦線もカード外側・展開時はサイドカード内側の通路に収める
       var gxS = Math.max(outerL, Math.min(ax - base, ax - depth));
       // 自分ループの進入高さは「そのカードへ着く順番」で刻む。出所 fan 基準だと他の
       // 戻る縁と左辺の同じ高さに集まって重なる。上下の辺には触れない範囲に収める。
       var sSelf = arrC > 1 ? Math.max(2, Math.min(9, (bh - 12) / (arrC - 1))) : 0;
       var eyS = Math.max(bt + 8, Math.min(bb - 8, acy - 12 - f * 8 + (arrC > 1 ? (arrI - (arrC - 1) / 2) * sSelf : 0)));
+      if (o.dstGw) eyS = Math.min(eyS, bt + 6);   // ひし形の左頂点付近は IO 矢印の着地点と
+                                                  // 重なるため、左上辺のうえ寄りに寄せる
       var stubS = Math.max(12, Math.min(22, (ax - gxS) * 0.35));
       var exS = bx;
       if (o.dstGw) {   // ひし形の輪郭に戻るよう、入る高さで x を寄せる
@@ -2566,7 +3359,27 @@ var row = sc.closest(".fc-row");
     // 出所・行き先だけ基準だと途中の広いカードを貫き、通路から出るとサイドカードを貫く。
     var clampL = function (x) { return Math.max(outerL, Math.min(spanL - base, x)); };
     var clampR = function (x) { return Math.max(spanR + base, Math.min(outerR, x)); };
+    if (o.self) depth = Math.max(4, depth - 8);   // 自分ループは後方通路より外側を回る
     var gx = left ? clampL(spanL - depth) : clampR(spanR + depth);
+    if (open && !up && ch === 0 && left && !o.self && !o.vert && !o.near) {
+      // 通路を持たない回り込みでも展開中はサイド列の外側へ回す。内側ガター
+      // （列の 3px 左）は読み取り矢印の着地面（カード縁から矢じりが左に 11px）を
+      // 縦に貫く（実測: 支払い読み取りの矢じりと通知縁が重畳）
+      gx = Math.max(10, Math.min(spanL - base,
+        (sideLeftMin === null ? 10 : sideLeftMin - 14) - (o.laneCountFwd || 1) * 12));
+    }
+    if (open && !up && !o.self && !o.vert && ch > 0) {
+      // 行き縁の回り込み: サイドカード帯の内側を通ると帯を貫くので、列の外縁の
+      // 外（離間 14px）を深度ぶん 12px で刻む。
+      var fwdEdge = left
+        ? (sideLeftMin === null ? 10 : sideLeftMin - 14)
+        : (sideRightMax === null ? clampW - 14 : sideRightMax + 14);
+      // clampL/clampR は内側ガター用の上下限（上限がサイドカードの手前）なので
+      // 余白を走るこの縁には使えない。余白の縁はレーンの端まで許す。
+      gx = left
+        ? Math.max(10, Math.min(spanL - base, fwdEdge - (ch - 1) * 12))
+        : Math.max(spanR + base, Math.min(clampW - 10, fwdEdge + (ch - 1) * 12));
+    }
     var d, yRun;
     if (up) {
       // 戻る縁は左頂点から出て、ガターとの角を丸めて上へ走る
@@ -2586,7 +3399,13 @@ var row = sc.closest(".fc-row");
         var outStride = o.srcGw
           ? Math.max(8, Math.min(16, (aw * 0.5) / Math.max(1, oc - 1)))
           : Math.max(6, Math.min(22, (aw - 16) / (oc - 1)));
-        sxStart = acx + (f - (oc - 1) / 2) * outStride;
+        // 刻み幅の分母(outCount)と連番は同じ数え方で揃える。fan は戻る縁も
+        // 通し番号なので、それを含む数え方の outCount と組み合わせると中央寄せが
+        // 崩れて全編が右へ寄る（outI は outCount と同じ集合の連番）
+        // ひし形は頂点が一点で、刻むと「下頂点の真下」規則から外れる。
+        // srcSeq が vert を数えるようになって折りたたみ時の outCount が 1 に
+        // ならなくなり、8px 刻みで頂点から外れた（実測 512 ≠ 520）
+        sxStart = o.srcGw ? acx : acx + ((o.outI || 0) - (oc - 1) / 2) * outStride;
       }
       var fyD = ab + 14 + f * 8;
       var d1D = Math.max(9, Math.min(20, (fyD - ab) * 0.6));
@@ -2603,6 +3422,17 @@ var row = sc.closest(".fc-row");
     var arrOff = o.arrOff || 0;
     var ex = o.dstGw ? bcx : bx + bw * (left || up ? 0.26 : 0.74) + (left ? -f * 14 : f * 14);
     ex = Math.max(bx + 6, Math.min(bx + bw - 6, ex + arrOff));
+    // 側通路の縁が下面へ溢れるほど集まるとき、上面進入の順序を通路の入れ子と
+    // 揃える（外側のレーン=区間の深い縁ほど、レーンの近い端から入る）。
+    // 連番の通し刻みのままだと深い縁が反対側から入り、旋回が浅い縁の曲線と
+    // 接線状に重なる（実測 s080→s119 と s084→s119 が 10px 並走）
+    if (!o.dstGw && !up && !left && !open && arrC > 1) {
+      var capT = Math.max(1, Math.floor(((bb - 8) - (bt + 8)) / 12));
+      if (arrC > capT && arrI < capT) {
+        ex = Math.max(bx + 6, Math.min(bx + bw - 6,
+          bx + bw * 0.74 + f * 14 + ((capT - 1 - arrI) - (capT - 1) / 2) * 14));
+      }
+    }
     var stub = Math.max(10, Math.min(22, Math.abs(faceY - yRun) * (up ? 0.2 : 0.25)));
     var ym = up ? faceY + stub : faceY - stub;   // 正面の外側、直進区間の端
     var dd = Math.max(12, Math.min(34, Math.abs(ym - yRun) * 0.45, Math.abs(ex - gx) * 0.7));
@@ -2622,8 +3452,40 @@ var row = sc.closest(".fc-row");
     // ガター出口で既に横へ分かれているので、辺の上で足し込むと端のはみ出し分だけクランプで
     // 折り返され先端が同じ y に潰れる（s119 へ 11 本 → 4 本が 10605 に重畳）。
     var lo = bt + 8, hi = bb - 8;
-    var sideStride = arrC > 1 ? Math.max(2, Math.min(12, (hi - lo) / (arrC - 1))) : 0;
-    var sideOff = arrC > 1 ? (arrI - (arrC - 1) / 2) * sideStride : f * 14;
+    // 一辺に並べられる上限。間隔 12px 未満だと矢じり（≈11px）同士が重なる
+    // （実測 s119 右辺 10 本 × 5px → arrowClash 18）。超えた分は下面から入れる。
+    // 展開中はカードの側面がサイドカード列に囲まれるので、通路を持たない縁が
+    // 通路（あき 20px 級）に滑り込めるのは 1 本まで。通路を持つ縁は下面へ回る。
+    // 展開中の四角カードは左右辺がサブカードの着地面なので側面の刻みは 1。
+    // ゲートウェイのひし形は辺が斜めで IO 矢印の着地面と違うため、展開中でも
+    // 側面を縦に刻める（12 本収束が同じ点に重なった実測: s119）
+    var faceCap = open ? (o.dstGw ? Math.max(1, Math.floor((hi - lo) / 14)) : 1)
+      : Math.max(1, Math.floor((hi - lo) / 12));
+    if (!o.dstGw && !up && arrC > faceCap && arrI >= faceCap) {
+      var ovI = arrI - faceCap, ovN = arrC - faceCap;
+      // 入れ子の階段: 通路の深い縁（ovI が大きい）ほど「カード間隔に近い段」と
+      // 「右側の入口」にする。浅い縁の横走りは深い縁の縦進入より下を、深い縁の縦
+      // 進入は浅い縁の横走りの右を終点にするので、どの組み合わせも交わらない
+      // （段を逆にすると横走りが他縁の矢じりを刺す。実測 arrowOnLine 5）。
+      // 入口 x は右半分（0.54〜0.94）。下面中央は次の縁の出口なので避ける。
+      var exB = bx + bw * (0.54 + 0.4 * (ovN > 1 ? ovI / (ovN - 1) : 0.5));
+      // 段の間隔は曲線の立ち上がり幅（krB ≤ 34）より広くする。5px だと隣の段の
+      // 床と、自縁のガターからの左旋回区間が同じ通路を通り、カーブ同士が
+      // すり抜ける（実測 parallel 約100px/組 × 12 組）。
+      var yyB = bb + 14 + (ovN - 1 - ovI) * 16;
+      var krB = Math.max(10, Math.min(34, Math.abs(gx - exB) * 0.35));
+      d += " L" + gx + "," + (yyB - krB) +
+           " C" + gx + "," + yyB + " " + (exB + krB) + "," + yyB + " " + exB + "," + yyB +
+           " L" + exB + "," + (bb + 5) + " L" + exB + "," + bb;
+      return { d: d, tan: -90, face: "up", keepX: true, end: true,
+        rowGap: (yyB - bb) + 26, lx: Math.min(gx, exB) - 8, ly: yyB - 9 };
+    }
+    var sideStride = arrC > 1 ? Math.max(12, Math.min(16, (hi - lo) / (Math.min(arrC, faceCap) - 1 || 1))) : 0;
+    // 段の並び順は通路の入れ子と揃える。区間の深い縁ほど外側の通路を通るのだから、
+    // 側面では一番下に進入する（左旋回が内側の縦線の下を素通りする）。上入れにすると
+    // 外側の旋回が内側の縦線に接線状に寄る（実測 s080→s119 と s084→s119 が 10px 並走）
+    var cap2 = Math.min(arrC, faceCap);
+    var sideOff = arrC > 1 ? (cap2 - 1 - arrI - (cap2 - 1) / 2) * sideStride : f * 14;
     var sg2 = up ? -1 : 1;
     var xr = left ? bx : bx + bw;                    // 側面（左辺または右辺）の x
     // 展開中は上寄りの I/O コネクタと帯を分けるため側面進入を下寄りへ寄せる。

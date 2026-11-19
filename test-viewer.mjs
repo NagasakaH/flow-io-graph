@@ -1157,10 +1157,21 @@ function gapGraph() {
   N.push({ id: "store:table/output-0", kind: "store", name: "output_0",
     metadata: { storeKind: "table", provenance: "definition" } });
   ed("step:gap/g6", "store:table/output-0", "writes", { access: "write" });
-  // 折り返さない長いラベルのループ縁を 2 本（退避しても列から逃げきれない長さ）
+  // 折り返さない長いラベルのループ縁を 4 本。退避先（上下 48px・横 220px）が
+  // 使い尽くされるよう、経由行と退回先の右列にもカードを積んで逃げ道を読む
   [["g6", "step:gap/g2", "10工程戻って入力確認からやり直す（再試行は 2 回まで）"],
-   ["g6", "step:gap/g3", "別条件での再試行（長期の待ち合わせを含む振り分け）"]].forEach(function (p) {
+   ["g6", "step:gap/g3", "別条件での再試行（長期の待ち合わせを含む振り分け）"],
+   ["g6", "step:gap/g4", "集約結果の検証に失敗したため取り込み済みのバッチを差し戻す（人手確認後に再投入）"],
+   ["g6", "step:gap/g5", "後処理のロック解除を待って同じ行から再試行する（タイムアウトは 30 分）"]].forEach(function (p) {
     ed("step:gap/" + p[0], p[1], "next", { order: Number(p[1].slice(-1)), label: p[2], loop: true });
+  });
+  // 退回先の行の右列にも格納先を積む（横の退避先を塞いで行間広げを発火させる）
+  ["g2", "g3", "g4", "g5"].forEach(function (id, k) {
+    for (let i = 0; i < 3; i++) {
+      N.push({ id: "store:table/mid-" + id + "-" + i, kind: "store", name: "mid_" + id + "_" + i,
+        metadata: { storeKind: "table", provenance: "definition" } });
+      ed("step:gap/" + id, "store:table/mid-" + id + "-" + i, k % 2 ? "writes" : "reads", { access: k % 2 ? "write" : "read" });
+    }
   });
   return { nodes: N, edges: E };
 }
@@ -1472,11 +1483,43 @@ test("合成グラフ: ラベル無し分岐も描く／同一端点の並行縁
     "API の向こうの格納先への reads 縁が描かれていない");
   const backCards = await p.locator('.fc-side .sub-card[data-node="store:table/sync-state"]').count();
   assert.ok(backCards >= 2, "API の向こうの同一格納先への reads / writes がカード " + backCards + " 枚に潰れている");
+  // サイド列は maxHeight で内スクロールになり、列の実寸は行高を超えない。
+  // 縁は「両端の辺中点が列の見える範囲にあるときだけ」描く（隠れた位置に
+  // 矢じりを出さない）。スクロール前後で、描画状況が可視性と一致する検査に
+  // 置き換える（昔の「スクロールすれば writes が必ず描かれる」は、端の API
+  // カードが反対側へスクロールアウトするため物理的に成立しない・実測）。
+  const edgeVsVisibility = () => p.evaluate(() => {
+    const b = document.querySelector('.fc-side .fnode[data-node="boundary:http/sync-api/fetch"]');
+    const col = b.closest(".fc-side");
+    const subs = Array.prototype.slice.call(
+      document.querySelectorAll('.fc-side .sub-card[data-node="store:table/sync-state"]'));
+    const sr = col.getBoundingClientRect();
+    const vis = (el) => {
+      const r = el.getBoundingClientRect();
+      const cy = (r.top + r.bottom) / 2;
+      return cy >= sr.top + 2 && cy <= sr.bottom - 2;
+    };
+    const drawn = (k) => !!document.querySelector('#flow-edges path.edge.' + k +
+      '[data-edge="boundary:http/sync-api/fetch|' + k + '|store:table/sync-state"]');
+    return {
+      api: vis(b), rSub: subs[0] ? vis(subs[0]) : false, wSub: subs[1] ? vis(subs[1]) : false,
+      reads: drawn("reads"), writes: drawn("writes"),
+    };
+  });
+  const consA = await edgeVsVisibility();
+  assert.equal(consA.reads, consA.api && consA.rSub,
+    "reads 縁の描画が可視性と不一致: " + JSON.stringify(consA));
+  assert.equal(consA.writes, consA.api && consA.wSub,
+    "writes 縁の描画が可視性と不一致: " + JSON.stringify(consA));
   await p.locator('.fc-side .sub-card[data-node="store:table/sync-state"]').last()
     .scrollIntoViewIfNeeded();
-  await p.waitForSelector(apiEdge("writes"), { timeout: 6000 });
-  assert.equal(await p.locator(apiEdge("writes")).count(), 1,
-    "API の向こうの格納先への writes 縁が描かれていない");
+  await p.waitForTimeout(450);
+  const consB = await edgeVsVisibility();
+  assert.equal(consB.reads, consB.api && consB.rSub,
+    "スクロール後に reads 縁の描画が可視性と不一致: " + JSON.stringify(consB));
+  assert.equal(consB.writes, consB.api && consB.wSub,
+    "スクロール後に writes 縁の描画が可視性と不一致: " + JSON.stringify(consB));
+  assert.ok(consB.wSub, "スクロールで最後のサブカードが可視にならない: " + JSON.stringify(consB));
   // ラベルの当たり検査は最初の画面（スクロール前）で行いたいので位置を戻す
   await p.evaluate(() => { window.__flowViewer.flowView.scroll.scrollTop = 0; });
   await p.waitForTimeout(400);
