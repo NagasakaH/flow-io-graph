@@ -1691,8 +1691,10 @@ html[data-theme="light"] {
       this.linkItems.forEach(function (it) {
         // 宛先ごとの側面はしごは一本にする。正面着地でも障害物検査で側面へ
         // 転落する縁が現れるので、別々のはしごだと両者の末尾が同じ着地に
-        // 一致する（静的検査 P1）。topOver を先頭に、残りを出所の深い順で末尾に
-        if (!it.dstGw || it.back || it.self || it.vert) return;
+        // 一致する（静的検査 P1）。topOver を先頭に、残りを出所の深い順で末尾に。
+        // exitOver 化の vert は頂点直結の固定柱ではないので、こちらもはしごへ
+        // 入れて側面の目盛を刻む（静的検査 P1・ラウンド 12）
+        if (!it.dstGw || it.back || it.self || (it.vert && !it.exitOver)) return;
         var key = (it.edge.target || "?") + "|" + it.side;
         var g2 = gwSide.get(key) || [];
         g2.push(it); gwSide.set(key, g2);
@@ -3318,8 +3320,12 @@ var row = sc.closest(".fc-row");
     // クランプで外側通路が同じ境界に潰れる（静的検査 P2）。扇はピッチの
     // 半分以内なので、扇の本数を半レーンとして分母に足す
     var laneMaxFan = !open ? (o.maxFanAll || 0) : (up ? (o.maxFanBack || 0) : (o.maxFanFwd || 0));
+    // 扇の予約は 1/(最大fan+1) レーン。扇の目盛をこの分数にすると
+    // (レーン, 扇) の組合せの深さは base + (ch + f/fanDiv)・pitch で
+    // 必ず違う値になる（扇の分数が 1 レーン未満なので隣のレーンと衝突しない）
+    var fanDiv = Math.max(1, laneMaxFan + 1);
     var pitch = lc > 1
-      ? Math.max(2, Math.min(basePitch, chan / Math.max(1, lc - 1 + laneMaxFan / 2)))
+      ? Math.max(2, Math.min(basePitch, chan / Math.max(1, lc - 1 + laneMaxFan / fanDiv)))
       : basePitch;
     // 通路が詰まるとき扇の刻み（fanPitch）を足すと使える幅を超えてクランプで
     // 折り返され、外側の通路が同じ x に潰れる（静的検査 P2-5）。扇は通路ピッチの
@@ -3327,7 +3333,7 @@ var row = sc.closest(".fc-row");
     // ガターが詰まるとき扇の最低目盛 3px が隣のレーンの通路を食って
     // 外側レーンと同じ x に潰れる。この領域では扇をピッチの正確な半分へ
     // 縮める。(レーン, 扇) の組合せの連番が違えば x も違う
-    var fanStep = pitch < 6 ? pitch / 2
+    var fanStep = pitch < 6 ? pitch / fanDiv
       : Math.min(fanPitch, Math.max(3, pitch / 2 - 1));
     var depth = base + ch * pitch + f * fanStep;
 
@@ -3437,10 +3443,14 @@ var row = sc.closest(".fc-row");
         if (o.srcGw && o.exitOver) {
           // 顔の収容を超えた出口は右頂点の脇から出す。展開中の回り込みは右列を
           // 共有するので、左頂点だとカードの右辺に沿って縦に下りることになる。
-          // 始点はひし形の輪郭の上。y を刻んだら x も斜辺に沿って内側へ寄るので、
-          // 輪郭から浮かず、降り出しの同じ x 同士の並走も起きない
-          var dyW = ((o.eoIdx || 0) - ((o.eoN || 1) - 1) / 2) *
-            Math.min(12, (ah - 16) / Math.max(1, o.eoN));
+          // 始点はひし形の輪郭の上。刻みは中心より下だけに置く——上半分から
+          // 真下へ下ると頂点に向かって細くなる輪郭の内側へ潜る（静的検査 P2）。
+          // 中心下なら進むほど輪郭が内側へ退くので線は常に外側。刻みごとに
+          // x も違うので降り出しの縦線も並走しない
+          var bW = Math.min(5, (ah / 2) * 0.25);
+          var stgW = Math.max(2, Math.min(12, ((ah / 2) - 9 - bW) /
+            Math.max(1, (o.eoN || 1) - 1)));
+          var dyW = bW + (o.eoIdx || 0) * stgW;
           sdy = acy + dyW;
           sxO = acx + (aw / 2) * (1 - Math.min(1, Math.abs(dyW) / (ah / 2)));
         }
@@ -3604,10 +3614,13 @@ var row = sc.closest(".fc-row");
       var sxStart = acx;
       var startY = -1;
       if (o.srcGw && o.exitOver) {
-        // 顔に載らない出口は側面の頂点の脇から掃き出す。頂点を上下に刻み、
-        // x は輪郭の傾きに沿わせる。y だけ刻むと始点が輪郭から浮く（静的検査 P2）
-        var stgO = Math.min(12, (ah - 16) / Math.max(1, o.eoN));
-        var dyG = ((o.eoIdx || 0) - ((o.eoN || 1) - 1) / 2) * stgO;
+        // 顔に載らない出口は側面の頂点の脇から掃き出す。x は輪郭の傾きに
+        // 沿わせる。刻みは中心より下だけ——上半分から真下は頂点に向かって
+        // 細くなる輪郭の内側へ潜る（静的検査 P2・ラウンド 12）
+        var hhO = ah / 2;
+        var bO = Math.min(5, hhO * 0.25);
+        var stgO = Math.max(2, Math.min(12, (hhO - 9 - bO) / Math.max(1, (o.eoN || 1) - 1)));
+        var dyG = bO + (o.eoIdx || 0) * stgO;
         startY = acy + dyG;
         sxStart = acx + (left ? -1 : 1) * (aw / 2) *
           (1 - Math.min(1, Math.abs(dyG) / (ah / 2)));
@@ -3735,13 +3748,26 @@ var row = sc.closest(".fc-row");
       // 乗せると出口をふさぐ（静的検査 P2）。退避を矢じり半分身幅ぶん押して、
       // カード幅に収める
       if (o.dstExit && o.dstExit.length) {
-        for (var q2 = 0; q2 < 2; q2++) {
+        // 押し出しは壁反発つき。押した先が半身の境界を外なら壁側へ戻すので、
+        // クランプで出口列の上へ戻されない。回る側の半身に収め、左右の退避着地も
+        // 取り違えない。出口が下辺を埋め尽くす密集（本数×11px ≥ 幅）は
+        // 着地点そのものがない物理上限として最近点に落ちる
+        var loH = left ? bx + 6 : bx + bw * 0.5, hiH = left ? bx + bw * 0.5 : bx + bw - 6;
+        for (var q2 = 0; q2 < 4; q2++) {
+          var moved2 = false;
           for (var q = 0; q < o.dstExit.length; q++) {
             var colX = bcx + o.dstExit[q];
-            if (Math.abs(exB - colX) < 12) exB += (exB < colX ? -1 : 1) * 12;
+            var dlt = exB - colX;
+            if (Math.abs(dlt) < 12) {
+              var dir = dlt < 0 ? -1 : 1;
+              var nx2 = colX + dir * 12;
+              exB = (nx2 < loH || nx2 > hiH) ? colX - dir * 12 : nx2;
+              moved2 = true;
+            }
           }
+          exB = Math.max(loH, Math.min(hiH, exB));
+          if (!moved2) break;
         }
-        exB = Math.max(bx + 6, Math.min(bx + bw - 6, exB));
       }
       // 段の間隔は曲線の立ち上がり幅（krB ≤ 34）より広くする。5px だと隣の段の
       // 床と、自縁のガターからの左旋回区間が同じ通路を通り、カーブ同士が
