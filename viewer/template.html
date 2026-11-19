@@ -1516,7 +1516,10 @@ html[data-theme="light"] {
           var back = isSelf || !down;      // 戻る縁は左回り
           var loop = !!md.loop || isSelf;  // 赤い ↺ 縁として描くか
           // ゲートウェイ同士の前方分岐は頂点から頂点への直結（ひし形の辺を横切らないため）
-          var vert = srcGw && dstGw && !loop && !back;
+          // ゲートウェイ同士の前方分岐は隣接のみ頂点から頂点への直結。途中にカードが
+          // ある飛び越しを直結すると、障害物検査より先に返るため途中のカードを貫く
+          // （静的検査 P1。通常縁に回せば障害物探査と側面進入が働く）
+          var vert = srcGw && dstGw && !loop && !back && near;
           var k = 0;
           if (!vert) { k = fan.get(id) || 0; fan.set(id, k + 1); }
           // 下頂点から扇を出す分、次の行との間隔を広げる（左頂点から出る縁は下らないので据え置き）
@@ -1540,33 +1543,76 @@ html[data-theme="light"] {
           var g0 = gface.get(it.edge.source) || { out: [], lnd: [] };
           g0.out.push(it); gface.set(it.edge.source, g0);
         }
-        if (it.dstGw && it.back && !it.vert) {
+        if (it.dstGw && !it.vert && !it.self && (it.back || it.loop)) {
           var g1 = gface.get(it.edge.target) || { out: [], lnd: [] };
           g1.lnd.push(it); gface.set(it.edge.target, g1);
         }
       });
       gface.forEach(function (g) {
-        var m = g.out.length + g.lnd.length;
-        if (!m) return;
         var elW = (g.out.length ? g.out[0].fromEl : g.lnd[0].toEl).offsetWidth || 300;
+        // 顔に載せられるのは半幅の 0.6 まで（目盛最小 12px なのでそれを超えると
+        // 輪郭の外へ落ちる）。超過した戻る縁は顔を使わず通常カードとして下辺へ
+        // 正面進入する（landOver。実在の本数を大きく超えても図が壊れないための上限）
+        var cap = Math.max(2, Math.floor(elW * 0.05) + 1);
+        var faceN = Math.min(g.lnd.length, Math.max(0, cap - g.out.length));
+        g.lnd.slice(faceN).forEach(function (it) { it.landOver = true; });
+        var lndFace = g.lnd.slice(0, faceN);
+        var m = g.out.length + lndFace.length;
+        if (!m) return;
         var step = m > 1 ? Math.min(40, Math.max(12, (elW - 16) / (m - 1))) : 0;
         var idxs = [];
         for (var gi = 0; gi < m; gi++) idxs.push(gi);
-        idxs.sort(function (a, b) {
-          return Math.abs(a - (m - 1) / 2) - Math.abs(b - (m - 1) / 2) || a - b;
-        });
-        var pick = idxs.slice(0, g.out.length).sort(function (a, b) { return a - b; });
-        var rest = idxs.slice(g.out.length).sort(function (a, b) { return a - b; });
+        // 出口は目盛の右側、戻る縁は左側に置く。戻る縁は左ガターから回り込むので、
+        // 帯の横走りが出口より左に収まれば出口の降り線と交わらない（内外中央寄せ
+        // だと出口の降り線を帯が横切る。静的検査 P2）
+        var pick = idxs.slice(m - g.out.length);
+        var rest = idxs.slice(0, m - g.out.length);
         g.out.forEach(function (it, i2) { it.gslot = (pick[i2] - (m - 1) / 2) * step; });
-        g.lnd.forEach(function (it, i2) { it.landSlot = (rest[i2] - (m - 1) / 2) * step; });
+        lndFace.forEach(function (it, i2) { it.landSlot = (rest[i2] - (m - 1) / 2) * step; });
         // たたみ時の下面左辺への横進入の順序。区間の深い縁ほど外側ガター（x が
         // 小さい）を通るので、その順で辺の上（y が小さい）に置く。外側の横走りが
         // 内側の戻る線と交わらない入れ子になる
-        var lndS = g.lnd.slice().sort(function (a, b) {
+        var lndS = lndFace.slice().sort(function (a, b) {
           return (idx.get(b.edge.source) || 0) - (idx.get(a.edge.source) || 0);
         });
         lndS.forEach(function (it, i2) { it.landIdx = i2; it.landN = lndS.length; });
       });
+      // ひし形の上辺に集まる係留を分散する。頂点直結（vert）は発の下辺と同じ列に
+      // 降りる固定柱なので、その列を空けてから前方進入を刻む。以前は頂点直結も
+      // 単独の前方進入も上頂点に着き、別経路の着地が重なって見えた（静的検査 P1）
+      var topFace = new Map();
+      this.linkItems.forEach(function (it) {
+        if (it.dstGw && !it.back && !it.self && !it.loop && !it.vert) {
+          var t0 = topFace.get(it.edge.target) || [];
+          t0.push(it); topFace.set(it.edge.target, t0);
+        }
+      });
+      topFace.forEach(function (arr) {
+        var tN = arr.length;
+        arr.forEach(function (it) { it.tslot = 0; });
+        if (tN < 1) return;
+        // 頂点直結の本数も入れた総数で目盛ピッチを決める
+        var gwNode = arr[0].toEl;
+        var verts = [];
+        this.linkItems.forEach(function (it) {
+          if (it.vert && it.edge.target === gwNode.dataset.node) verts.push(it);
+        });
+        var allN = tN + verts.length;
+        if (allN < 2) return;
+        var elW = gwNode.offsetWidth || 300;
+        var tstep = Math.min(40, Math.max(12, (elW - 16) / (allN - 1)));
+        var taken = [];
+        verts.forEach(function (it) { taken.push(it.gslot || 0); });
+        var fi = 0;
+        arr.forEach(function (it) {
+          for (;;) {
+            var p = (fi - (allN - 1) / 2) * tstep; fi++;
+            var hot = false;
+            for (var ti = 0; ti < taken.length && !hot; ti++) hot = Math.abs(p - taken[ti]) < 11;
+            if (!hot || fi > allN * 3) { it.tslot = p; taken.push(p); break; }
+          }
+        });
+      }.bind(this));
       // 同じ側で絡み合う（s < s' < t < t' のように区間が交差する）2 本は平面に描けないので、
       // 下の行から出る縁を反対側へ回す。
       this.linkItems.forEach(function (it) {
@@ -1604,7 +1650,9 @@ html[data-theme="light"] {
           // 行き縁にも通路を割り当てる: たたみ時はガターが空なので、長い行き縁を
           // 同じ x に潰すと数十本が縦線で重なる（実測 1515 セル）。左右別枠の first-fit。
           var s0 = idx.get(it.edge.source) || 0, t0 = idx.get(it.edge.target) || 0;
-          if (it.self || Math.abs(t0 - s0) < 2) { it.chan = 0; return; }
+          // 戻る縁は隣接行でも縦列を持つ。隣接を通路割り当てから外すと、長い戻る縁と
+          // 同じガター x を使い、縦区間が重なって並走する（静的検査 P2）
+          if (it.self || (Math.abs(t0 - s0) < 2 && !it.back)) { it.chan = 0; return; }
           var lo = Math.min(s0, t0), hi = Math.max(s0, t0);
           var k = -1;
           for (var li = 0; li < laneEnds.length; li++) {
@@ -2164,7 +2212,8 @@ var row = sc.closest(".fc-row");
               chanBack: it.chanBack || 0, chanFwd: it.chanFwd || 0, fan: it.fan,
               laneUsed: !!it.laneUsed,
               srcGw: it.srcGw, dstGw: it.dstGw, vert: it.vert, gslot: it.gslot || 0, landSlot: it.landSlot || 0,
-              landIdx: it.landIdx || 0, landN: it.landN || 0, gBase: sideGap,
+              landIdx: it.landIdx || 0, landN: it.landN || 0,
+              tslot: it.tslot || 0, landOver: !!it.landOver, gBase: sideGap,
               near: it.near, srcRowB: rowBotOf(it.fromEl), dstRowB: rowBotOf(it.toEl),
               srcRow: it.fromEl && it.fromEl.closest ? it.fromEl.closest(".fc-row") : null,
               arr: it.arr || 0, arrCount: it.arrCount || 0, outCount: it.outCount || 0,
@@ -2284,6 +2333,9 @@ var row = sc.closest(".fc-row");
       for (var di = 0; di < items.length; di++) if (items[di].d) drawable.push(di);
       svg.setAttribute("data-expected", String(drawable.length));
       svg.setAttribute("data-expected-eids", drawable.join(","));
+      // 経路生成前の意図集合（全描画対象縁）。監査側はこれを期待の分母に使う。
+      // 経路が全採取点で null の縁が「期待に入らないまま黙る」のを防ぐ
+      svg.setAttribute("data-intent", String(items.length));
       var skipped = 0;
       var labels = [];
       // 縁の終端（矢印）のまわりはラベルを置かない場所として覚える。矢印の先がラベルに
@@ -3207,9 +3259,10 @@ var row = sc.closest(".fc-row");
           var kY = rBotT + 14 + (kN - 1 - kIdx) * 16;
           // 退回縁の下面進入は行下帯から縦に上がる。着地点は顔スロット登記が
           // 宛先ひし形の下辺の外側目盛へ刻む（出口の降り線と列を共有しない）
-          var exK = o.dstGw ? bcx + (o.landSlot || 0)
-                            : bx + bw * (0.38 - 0.30 * (kN > 1 ? kIdx / (kN - 1) : 0.5));
-          var tipK = bb - (o.dstGw ? Math.min(bh / 2, Math.abs(exK - bcx) * (bh / bw)) : 0);
+          var gwkD = o.dstGw && !o.landOver;
+          var exK = gwkD ? bcx + (o.landSlot || 0)
+                         : bx + bw * (0.38 - 0.30 * (kN > 1 ? kIdx / (kN - 1) : 0.5));
+          var tipK = bb - (gwkD ? Math.min(bh / 2, Math.abs(exK - bcx) * (bh / bw)) : 0);
           var krx = Math.max(10, Math.min(30, Math.abs(exK - xd) * 0.25));
           var dK = "M" + ax + "," + acy +
             " C" + (ax - 14) + "," + acy + " " + xd + "," + (acy + 16) + " " + xd + "," + (ab + 6) +
@@ -3397,14 +3450,17 @@ var row = sc.closest(".fc-row");
       // 同じカードから複数出すなら出る x も左右に刻む（同じ点だと分岐直前まで重なる）。
       var oc = o.outCount || 0;
       var sxStart = acx;
-      if (oc > 1) {
-        // 普通カードは下辺の幅ぶん左右に刻む。ひし形は顔スロット登記の下辺
-        // 刻みを使うのでこの扇は使わない。
+      if (o.srcGw) {
+        // ひし形の始点は本数にかかわらず顔スロット登記の目盛から。出口が 1 本でも
+        // y だけ目盛の高さへ上がると始点が輪郭から浮く（静的検査 P2）
+        sxStart = acx + (o.gslot || 0);
+      } else if (oc > 1) {
+        // 普通カードは下辺の幅ぶん左右に刻む。
         var outStride = Math.max(6, Math.min(22, (aw - 16) / (oc - 1)));
         // 刻み幅の分母(outCount)と連番は同じ数え方で揃える。fan は戻る縁も
         // 通し番号なので、それを含む数え方の outCount と組み合わせると中央寄せが
         // 崩れて全編が右へ寄る（outI は outCount と同じ集合の連番）
-        sxStart = acx + (o.srcGw ? (o.gslot || 0) : ((o.outI || 0) - (oc - 1) / 2) * outStride);
+        sxStart = acx + ((o.outI || 0) - (oc - 1) / 2) * outStride;
       }
       var ab0 = ab - (o.srcGw ? Math.min(ah / 2, Math.abs(o.gslot || 0) * (ah / aw)) : 0);
       var fyD = ab + 14 + f * 8;
@@ -3423,12 +3479,13 @@ var row = sc.closest(".fc-row");
     // ひし形への正面進入も辺に沿って刻む（前面は上辺、退回縁は下辺）。下辺の
     // 退回着地は顔スロット登記の外側目盛を使い、前面の複数本は矢じり幅より
     // 広く刻む。着地の y は傾いた辺の実測高さに立ち、矢じりを辺から浮かせない
-    var gwIn = o.dstGw ? (up ? (o.landSlot || 0)
-      : (arrC > 1 ? (arrI - (arrC - 1) / 2) * Math.min(40, Math.max(14, (bw - 16) / (arrC - 1))) : 0)) : 0;
-    var ex = o.dstGw ? bcx + gwIn : bx + bw * (left || up ? 0.26 : 0.74) + (left ? -f * 14 : f * 14);
-    ex = Math.max(bx + 6, Math.min(bx + bw - 6, ex + (o.dstGw ? 0 : arrOff)));
+    // 顔の収容数を超えた戻る縁は通常カード扱い（菱形の目盛を使わない）
+    var gwLand = o.dstGw && !o.landOver;
+    var gwIn = gwLand ? (up ? (o.landSlot || 0) : (o.tslot || 0)) : 0;
+    var ex = gwLand ? bcx + gwIn : bx + bw * (left || up ? 0.26 : 0.74) + (left ? -f * 14 : f * 14);
+    ex = Math.max(bx + 6, Math.min(bx + bw - 6, ex + (gwLand ? 0 : arrOff)));
     var tipY = faceY;
-    if (o.dstGw) {
+    if (gwLand) {
       var eDrop = Math.min(bh / 2, Math.abs(ex - bcx) * (bh / bw));
       tipY = up ? bb - eDrop : bt + eDrop;
     }
@@ -3459,7 +3516,7 @@ var row = sc.closest(".fc-row");
     // 上辺から入る分岐縁の矢じりに触れる（実測 s000→s001 双子の矢じり × s008 の
     // 戻る縁、s000 の直下に 16px の隙間しかない）。辺へ横に入れば次の行の帯に
     // 一切寄らない。区間の深い縁ほど辺の上に入り、横走りが内側の縦線と交わらない
-    if (o.dstGw && up && !open && !o.vert) {
+    if (gwLand && up && !open && !o.vert) {
       var fN = Math.max(1, o.landN || 1);
       var fK = Math.max(0, Math.min(fN - 1, o.landIdx || 0));
       // 刻みは頂点から 0.78 以内（左頂点からは自分ループ ↺ が水平に出ていて、
