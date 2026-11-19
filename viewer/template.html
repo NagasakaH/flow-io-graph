@@ -1625,12 +1625,27 @@ html[data-theme="light"] {
         });
         lndS.forEach(function (it, i2) { it.landIdx = i2; it.landN = lndS.length; });
       });
+      // 各ゲートウェイの下辺が出口に占有する列。下面から退避着地する縁は
+      // この列を避ける（静的検査 P2）
+      var gwExits = new Map();
+      gface.forEach(function (g, id) {
+        var sl = [];
+        g.out.forEach(function (e2) {
+          if (!e2.exitOver && typeof e2.gslot === "number") sl.push(e2.gslot);
+        });
+        gwExits.set(id, sl);
+      });
+      this.linkItems.forEach(function (it) {
+        if (it.dstGw) it.dstExit = gwExits.get(it.edge.target) || null;
+      });
       // ひし形の上辺に集まる係留を分散する。頂点直結（vert）は発の下辺と同じ列に
       // 降りる固定柱なので、その列を空けてから前方進入を刻む。以前は頂点直結も
       // 単独の前方進入も上頂点に着き、別経路の着地が重なって見えた（静的検査 P1）
       var topFace = new Map();
       this.linkItems.forEach(function (it) {
-        if (it.dstGw && !it.back && !it.self && !it.vert) {
+        if (it.dstGw && !it.back && !it.self && (!it.vert || it.exitOver)) {
+          // vert でも収容超過で側面頂点発になった縁は、もはや発の列に降りる
+          // 固定柱ではない。上辺の目盛をもらわないと同頂点に潰れる（静的検査 P1）
           var t0 = topFace.get(it.edge.target) || [];
           t0.push(it); topFace.set(it.edge.target, t0);
         }
@@ -1643,7 +1658,7 @@ html[data-theme="light"] {
         var gwNode = arr[0].toEl;
         var verts = [];
         this.linkItems.forEach(function (it) {
-          if (it.vert && it.edge.target === gwNode.dataset.node) verts.push(it);
+          if (it.vert && !it.exitOver && it.edge.target === gwNode.dataset.node) verts.push(it);
         });
         var allN = tN + verts.length;
         if (allN < 2) return;
@@ -1674,16 +1689,21 @@ html[data-theme="light"] {
       // 目印で登記時に確定しているので、その連番をここで作る
       var gwSide = new Map();
       this.linkItems.forEach(function (it) {
-        if (!it.dstGw || !it.topOver) return;
+        // 宛先ごとの側面はしごは一本にする。正面着地でも障害物検査で側面へ
+        // 転落する縁が現れるので、別々のはしごだと両者の末尾が同じ着地に
+        // 一致する（静的検査 P1）。topOver を先頭に、残りを出所の深い順で末尾に
+        if (!it.dstGw || it.back || it.self || it.vert) return;
         var key = (it.edge.target || "?") + "|" + it.side;
         var g2 = gwSide.get(key) || [];
         g2.push(it); gwSide.set(key, g2);
       });
       gwSide.forEach(function (g2) {
-        // 並び順は dstGroups と同じ規約。同じ宛先では出る行が深いほど深い通路に
-        // なるので、左辺は出る行が深い順（降順）、右辺は昇順に刻む
+        // 群内は dstGroups と同じ規約。区間の深い縁が外側の通路なので、左辺は
+        // 出所深い順（降順）、右辺は昇順。側面へ回ることが確定している topOver は
+        // 種別に関係なく先頭（収容枠を先に確保する）
         var lft = g2[0].side === "left";
         g2.sort(function (a, b) {
+          if (!!a.topOver !== !!b.topOver) return a.topOver ? -1 : 1;
           var d = (idx.get(a.edge.source) || 0) - (idx.get(b.edge.source) || 0);
           return lft ? -d : d;
         });
@@ -2298,6 +2318,7 @@ var row = sc.closest(".fc-row");
               maxFanFwd: (lu && lu[it.side]) ? (lu[it.side].maxFanFwd || 0) : 0,
               exitOver: !!it.exitOver, eoIdx: it.eoIdx || 0, eoN: it.eoN || 0,
               sarr: it.sarr || 0, sarrN: it.sarrN || 0,
+              dstExit: it.dstExit || null,
               clampW: contentW,
             })
           : bezier(box, ra, rb, it.vertical, it.ioBox);
@@ -3298,12 +3319,16 @@ var row = sc.closest(".fc-row");
     // 半分以内なので、扇の本数を半レーンとして分母に足す
     var laneMaxFan = !open ? (o.maxFanAll || 0) : (up ? (o.maxFanBack || 0) : (o.maxFanFwd || 0));
     var pitch = lc > 1
-      ? Math.max(4, Math.min(basePitch, chan / Math.max(1, lc - 1 + laneMaxFan / 2)))
+      ? Math.max(2, Math.min(basePitch, chan / Math.max(1, lc - 1 + laneMaxFan / 2)))
       : basePitch;
     // 通路が詰まるとき扇の刻み（fanPitch）を足すと使える幅を超えてクランプで
     // 折り返され、外側の通路が同じ x に潰れる（静的検査 P2-5）。扇は通路ピッチの
     // 半分以内におさめ、通路の並びを保ったまま寄せる
-    var fanStep = Math.min(fanPitch, Math.max(3, pitch / 2 - 1));
+    // ガターが詰まるとき扇の最低目盛 3px が隣のレーンの通路を食って
+    // 外側レーンと同じ x に潰れる。この領域では扇をピッチの正確な半分へ
+    // 縮める。(レーン, 扇) の組合せの連番が違えば x も違う
+    var fanStep = pitch < 6 ? pitch / 2
+      : Math.min(fanPitch, Math.max(3, pitch / 2 - 1));
     var depth = base + ch * pitch + f * fanStep;
 
     // ゲートウェイ同士の前方分岐: 下頂点から上頂点への短い垂直下降。
@@ -3410,11 +3435,14 @@ var row = sc.closest(".fc-row");
         var sxO = acx + gsO;
         var sdy = ab - (o.srcGw ? Math.min(ah / 2, Math.abs(gsO) * (ah / aw)) : 0);
         if (o.srcGw && o.exitOver) {
-          // 顔の収容を超えた出口は右頂点から出す。展開中の回り込みは右列を
-          // 共有するので、左頂点だとカードの右辺に沿って縦に下りることになる
-          sxO = ax + aw;
-          sdy = acy + ((o.eoIdx || 0) - ((o.eoN || 1) - 1) / 2) *
+          // 顔の収容を超えた出口は右頂点の脇から出す。展開中の回り込みは右列を
+          // 共有するので、左頂点だとカードの右辺に沿って縦に下りることになる。
+          // 始点はひし形の輪郭の上。y を刻んだら x も斜辺に沿って内側へ寄るので、
+          // 輪郭から浮かず、降り出しの同じ x 同士の並走も起きない
+          var dyW = ((o.eoIdx || 0) - ((o.eoN || 1) - 1) / 2) *
             Math.min(12, (ah - 16) / Math.max(1, o.eoN));
+          sdy = acy + dyW;
+          sxO = acx + (aw / 2) * (1 - Math.min(1, Math.abs(dyW) / (ah / 2)));
         }
         var ocF = o.outCount || 0;
         // 出口扇はサイド列の有無に限らず、同じ出所に複数出口があるなら刻む。
@@ -3576,11 +3604,13 @@ var row = sc.closest(".fc-row");
       var sxStart = acx;
       var startY = -1;
       if (o.srcGw && o.exitOver) {
-        // 顔に載らない出口は側面の頂点から掃き出す。頂点を上下に刻むので
-        // 同一点に潰えない（静的検査 P2）
+        // 顔に載らない出口は側面の頂点の脇から掃き出す。頂点を上下に刻み、
+        // x は輪郭の傾きに沿わせる。y だけ刻むと始点が輪郭から浮く（静的検査 P2）
         var stgO = Math.min(12, (ah - 16) / Math.max(1, o.eoN));
-        sxStart = left ? ax : ax + aw;
-        startY = acy + ((o.eoIdx || 0) - ((o.eoN || 1) - 1) / 2) * stgO;
+        var dyG = ((o.eoIdx || 0) - ((o.eoN || 1) - 1) / 2) * stgO;
+        startY = acy + dyG;
+        sxStart = acx + (left ? -1 : 1) * (aw / 2) *
+          (1 - Math.min(1, Math.abs(dyG) / (ah / 2)));
       } else if (o.srcGw) {
         // ひし形の始点は本数にかかわらず顔スロット登記の目盛から。出口が 1 本でも
         // y だけ目盛の高さへ上がると始点が輪郭から浮く（静的検査 P2）
@@ -3701,6 +3731,18 @@ var row = sc.closest(".fc-row");
       // （静的検査 P1）。回る側で半分の幅を使い、段は ovI で揃える
       var ovFrac = ovN > 1 ? ovI / (ovN - 1) : 0.5;
       var exB = left ? bx + bw * (0.46 - 0.40 * ovFrac) : bx + bw * (0.54 + 0.4 * ovFrac);
+      // 着地はこのカード下辺の出口列を避ける。出口の降り線の上に矢じりを
+      // 乗せると出口をふさぐ（静的検査 P2）。退避を矢じり半分身幅ぶん押して、
+      // カード幅に収める
+      if (o.dstExit && o.dstExit.length) {
+        for (var q2 = 0; q2 < 2; q2++) {
+          for (var q = 0; q < o.dstExit.length; q++) {
+            var colX = bcx + o.dstExit[q];
+            if (Math.abs(exB - colX) < 12) exB += (exB < colX ? -1 : 1) * 12;
+          }
+        }
+        exB = Math.max(bx + 6, Math.min(bx + bw - 6, exB));
+      }
       // 段の間隔は曲線の立ち上がり幅（krB ≤ 34）より広くする。5px だと隣の段の
       // 床と、自縁のガターからの左旋回区間が同じ通路を通り、カーブ同士が
       // すり抜ける（実測 parallel 約100px/組 × 12 組）。
